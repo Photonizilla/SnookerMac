@@ -1564,6 +1564,34 @@ final class FrameDriverTests: XCTestCase {
         XCTAssertEqual(full.travelled, FrameDriver.maxFollowThrough, accuracy: 2)
     }
 
+    /// **A charge sets the cue's own speed**, and everything the cue ball does comes out of that and the
+    /// point on the ball the tip is striking: a centre hit sends it away at `1 + e` times the cue's speed,
+    /// and the further off centre the tip is, the more of the same impulse goes on spin and the less is
+    /// left for travel. Nothing sets the ball's speed alongside the cue's.
+    func testAChargedShotSetsTheCuesSpeedAndTheStrikeDecidesTheBall() {
+        for (side, vertical) in [(0.0, 0.0), (0.5, -0.2), (0.0, -0.5), (0.9, 0.0)] {
+            let d = cueActionSetupInTheOpen()
+            d.setSpin(side: side, vertical: vertical)
+            let power = 0.6
+            d.beginCharge(at: 0)
+            d.updateCharge(at: (power - FrameDriver.minimumChargePower) * 1.1)
+            XCTAssertEqual(d.power, power, accuracy: 0.001)
+            d.releaseShot()
+
+            // The stick is at its own speed at the moment it touched the ball — the meter's fraction of the
+            // fastest a cue may be travelling — and the ball's speed is that speed put through the strike.
+            let cueSpeed = FrameDriver.maxCueSpeed * power
+            XCTAssertEqual(d.cueTravelSpeed, cueSpeed, accuracy: cueSpeed * 0.001,
+                           "the meter sets the cue's speed, and the cue does not change speed on the ball")
+            // The strike sends the ball away **along the cue's own line** at the speed the model gives for
+            // that cue speed and that point on the ball; what the ball's velocity *along the cloth* is of
+            // that depends on the angle the cue stands at, since a lifted cue drives the ball down into it.
+            let alongTheCue = FrameDriver.ballSpeed(fromCueSpeed: cueSpeed, tipOffset: d.tipOffset)
+            XCTAssertEqual(d.cueBall?.velocity.length ?? 0, alongTheCue * cos(d.cueElevation), accuracy: 1,
+                           "and the ball's speed is what the strike makes of that speed at that point")
+        }
+    }
+
     /// The frame reports every contact as it happens — what kind, where on the table, and how hard —
     /// and reports nothing it did not make: the view plays what it is handed and has nothing else.
     func testTheFrameReportsTheContactsItMade() {

@@ -69,9 +69,11 @@ public final class FrameDriver {
     /// times the next mode is decided.
     private var haveCountedTheFrame = false
 
-    /// Cue ball speed at full power, in mm/s. It is the top of the range every way of playing the shot
-    /// is measured against: the timed charge's full power, the strength meter's far end, and the fastest
-    /// the tip may be travelling — see `maxCueSpeed`.
+    /// The cue ball's speed at full power **on a centre hit**, in mm/s: the top of the range everything
+    /// about a shot is measured against — the strength meter's far end, and the speed a centre-ball strike
+    /// sends the ball away at. Both ways of playing a shot set the **cue's** own speed
+    /// (`maxCueSpeed`) and the ball's speed comes out of the strike: see `ballSpeed(fromCueSpeed:tipOffset:)`
+    /// and `beginStroke(cueSpeed:followThrough:)`.
     public static let maxPower: Double = 6000
 
     // Aiming
@@ -937,7 +939,7 @@ public final class FrameDriver {
         lastStrikeCueSpeed = cueSpeed
         let ballSpeed = FrameDriver.ballSpeed(fromCueSpeed: cueSpeed, tipOffset: tipOffset)
         power = min(1, ballSpeed / FrameDriver.maxPower)
-        beginStroke(ballSpeed: ballSpeed)
+        beginStroke(cueSpeed: cueSpeed)
     }
 
     /// Puts the cue down without playing a stroke: letting go of the S key, or putting the shot down to
@@ -988,7 +990,18 @@ public final class FrameDriver {
         case charged
     }
 
-    private func beginStroke(ballSpeed: Double? = nil, followThrough: FollowThrough = .byHand) {
+    /// Plays the stroke: the **cue's** own speed is what the caller sets, and everything the cue ball does
+    /// comes out of that and the point on the ball the tip is striking — see
+    /// `ballSpeed(fromCueSpeed:tipOffset:)`.
+    ///
+    /// `cueSpeed` is the speed of the stick at the moment it meets the ball: the hand's own speed for a
+    /// shot played with `S` (see `playStroke`), and for a **charge** the meter's fraction of
+    /// `maxCueSpeed` — so a full charge is a cue at its fastest and a gentler one is a slower cue. What the
+    /// ball does with that is the strike's business: a centre hit sends it away at `1 + e` times the cue's
+    /// speed, and the further the tip is from the middle of the ball the more of the strike goes on spin
+    /// and the less there is left for travel. The ball's speed is therefore **derived**, and never set
+    /// alongside the cue's.
+    private func beginStroke(cueSpeed: Double? = nil, followThrough: FollowThrough = .byHand) {
         guard let cue = cueBall, cue.onTable else { return }
         endCueAction()
         // The cue is laid where it fits before it is driven through the ball: the pose the strike is
@@ -1015,26 +1028,29 @@ public final class FrameDriver {
         simulationClock = 0
         flash = nil
 
-        let speed = ballSpeed ?? FrameDriver.maxPower * max(0.03, power)
+        let speed = cueSpeed ?? FrameDriver.maxCueSpeed * max(0.03, power)
+        // What the strike does with that speed at the point on the ball the tip is striking — the leather's
+        // own limit, not the edge of the ball, is how far off centre the strike acts:
+        // `PhysicsWorld.cueTipOffsetLimit`.
+        let struckBallSpeed = FrameDriver.ballSpeed(fromCueSpeed: speed, tipOffset: tipOffset)
         // The stroke itself is the first impact of the frame, and the only one not to come back through
         // `world.events` — the strike is played here, after the events were cleared and before the
         // simulation starts walking them out.
-        impacts.append(Impact(kind: .strike, at: cue.position, speed: speed))
+        impacts.append(Impact(kind: .strike, at: cue.position, speed: struckBallSpeed))
         world.clearEvents()
         // The strike is played along the cue's own axis, at the angle the cue is standing at: see
         // `PhysicsWorld.cueLean` for the floor the player's stance puts under that.
         world.applyCueStrike(cueBallID: BallID.cue,
                              direction: Vec2(cos(aimAngle), sin(aimAngle)),
-                             power: speed, side: spinSide, vertical: spinVertical,
+                             power: struckBallSpeed, side: spinSide, vertical: spinVertical,
                              elevation: PhysicsWorld.cueLean(at: cueElevation))
         // The stick itself stays on the table from here, and it is the player's for the rest of the
         // stroke: the mouse carries it along at whatever speed they give it, and any ball it runs into
         // after the cue ball is a ball contacted with the player's equipment — a foul either way.
-        // The cue's own speed is what the ball's came from: the ball leaves at `1 + e` times it, so the
-        // stick is left travelling at `speed / (1 + e)` and the ball outruns it from the start. That is
-        // **the stick's own speed at the moment it touched the ball**, and the fastest it may be carried
-        // forward for the rest of the stroke: see `carryTheCue`.
-        theStickWasTravellingAt = speed / (1 + FrameDriver.cueTipRestitution)
+        // The stick is left travelling at **its own speed at the moment it touched the ball**, which is the
+        // speed the caller set: a cue does not speed up or slow down when it meets a ball, and this is the
+        // fastest it may be carried forward for the rest of the stroke. See `carryTheCue`.
+        theStickWasTravellingAt = speed
         placeTheCueAfterTheStrike(of: cue, at: theStickWasTravellingAt)
         // A charged shot's follow-through is the game's to carry: the length follows the strength of the
         // shot, from the least a charge can be to a full-power one, and it is measured like
@@ -1042,7 +1058,7 @@ public final class FrameDriver {
         // `carryTheChargedFollowThrough`.
         theStrokeIsCharged = followThrough == .charged
         if theStrokeIsCharged {
-            theChargedFollowThrough = (target: FrameDriver.chargedFollowThroughLength(of: speed / FrameDriver.maxPower),
+            theChargedFollowThrough = (target: FrameDriver.chargedFollowThroughLength(of: speed / FrameDriver.maxCueSpeed),
                                        speed: theStickWasTravellingAt)
         } else {
             theChargedFollowThrough = nil

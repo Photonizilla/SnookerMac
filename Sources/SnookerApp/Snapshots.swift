@@ -3292,7 +3292,7 @@ enum Snapshots {
             }
             driver.syncWorldFromState()
             driver.aimAngle = .pi / 2          // across the table, nowhere near the Red
-            driver.shoot(angle: .pi / 2, power: 800, side: 0, vertical: 0)
+            driver.shoot(angle: .pi / 2, power: 0.8, side: 0, vertical: 0)
             driver.runStrokeToRest()
             scene.refresh(force: true)
             let foulButtons = scene.buttonNodesOnScreen
@@ -3317,7 +3317,7 @@ enum Snapshots {
             state.pending = nil
         }
         driver.syncWorldFromState()
-        driver.shoot(angle: .pi / 2, power: 700, side: 0, vertical: 0)
+        driver.shoot(angle: .pi / 2, power: 0.7, side: 0, vertical: 0)
         driver.runStrokeToRest()
         print("  left deciding after a foul: mode \(driver.mode), may strike: \(driver.canStrike)")
 
@@ -3374,7 +3374,7 @@ enum Snapshots {
         driver.chooseColour(.pink)
         scene.refresh(force: true)
         print("  changed mind to pink: \(driver.nominatedColour == .pink)")
-        driver.shoot(angle: 0, power: 500, side: 0, vertical: 0)
+        driver.shoot(angle: 0, power: 0.5, side: 0, vertical: 0)
         scene.refresh(force: true)
         print("  once the stroke is played: \(scene.buttonNodesOnScreen) buttons")
 
