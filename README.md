@@ -1101,6 +1101,16 @@ owns the authoritative ball layout (positions and spotting).
   free of the cue once the leather has let go; a contact made after that is a second one, the double hit
   of Rule 11(a)(ii). The stroke is one contact and not two.
 
+  What happens *inside* that moment is simulated and not assumed, because a strike is a spring: the ball is
+  **standing** when the tip first has it, the leather presses into it — the crown of the dome is seen to go
+  a millimetre and a half into the ball and come back out — and the ball is driven up from nothing to the
+  whole of the velocity and spin the strike is worth only as the tip comes out of it and lets go
+  (`PhysicsWorld.CueContact`). The profile is the pair's own: a spring with the leather's damping in it,
+  under a striker going at the cue's speed, which is `1 - e^(-z w t)(cos w_d t - (z w / w_d) sin w_d t)` over
+  its own `1 + e`. What the ball leaves with is therefore exactly what the impulse-momentum answer says it
+  will — the two are the same statement, read from the two ends — and what the ball is *doing* in the
+  meantime is the compression and the release, which is what a strike is.
+
   What the stick does after that depends on who is holding it. A shot played by **hand** keeps the
   hand's own follow-through — the mouse `carryTheCue`s it, watched by the cap below. A shot played by
   **charge** is the same stroke with the game's own hand on the cue: from the moment the button is let go

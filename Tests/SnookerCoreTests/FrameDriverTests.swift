@@ -4,6 +4,16 @@ import XCTest
 /// End-to-end tests: place the cue ball, aim, shoot, simulate and adjudicate.
 final class FrameDriverTests: XCTestCase {
 
+
+    /// Plays a stroke's own **contact** out: a strike is not an instant, and the ball has the velocity and
+    /// spin the strike is worth only once the tip has pressed into it and let it go. A test that reads what
+    /// a stroke has just done asks through this. See `PhysicsWorld.CueContact`.
+    private func letTheTipLetGo(_ d: FrameDriver) {
+        while d.mode == .simulating, d.world.aStrikeIsBeingPlayed {
+            d.update(dt: 1.0 / 4000.0)
+        }
+    }
+
     private func driver() -> FrameDriver {
         FrameDriver(playerNames: ["A", "B"])
     }
@@ -698,6 +708,7 @@ final class FrameDriverTests: XCTestCase {
         XCTAssertTrue(d.moveCue(forwardByMillimetres: 80, over: 0.04))
         XCTAssertEqual(d.mode, .simulating)
         XCTAssertFalse(d.isMovingTheCue, "the cue is out of the player's hands once the shot is away")
+        letTheTipLetGo(d)
         // The ball is struck at the cue's own speed, and the cue's own speed is never more than the
         // hand's: the push is read as its running average (`cuePushAverageSeconds`), so the tip is
         // played at the speed the cue has arrived at. This frame is longer than that window, so the
@@ -734,6 +745,7 @@ final class FrameDriverTests: XCTestCase {
                 left -= piece
                 pushTheFastFrame.toggle()
             }
+            letTheTipLetGo(d)
             return d.cueBall?.velocity.length ?? 0
         }
         let steady = shotSpeed(fast: 2000, slow: 2000)
@@ -755,6 +767,7 @@ final class FrameDriverTests: XCTestCase {
             d.moveCue(forwardByMillimetres: -draw, over: 0.3)
             let travel = draw + 20          // far enough to bring the tip through the ball
             d.moveCue(forwardByMillimetres: travel, over: travel / 1500)
+            letTheTipLetGo(d)
             return d.cueBall?.velocity.length ?? 0
         }
 
@@ -769,6 +782,7 @@ final class FrameDriverTests: XCTestCase {
         d.beginCueAction()
         d.moveCue(forwardByMillimetres: -100, over: 0.3)
         d.moveCue(forwardByMillimetres: 120, over: 0.4)
+        letTheTipLetGo(d)
         XCTAssertEqual(d.cueBall?.velocity.length ?? 0,
                        FrameDriver.ballSpeed(fromCueSpeed: 300, tipOffset: 0), accuracy: 1,
                        "moving the cue slowly is a slow shot")
@@ -828,6 +842,7 @@ final class FrameDriverTests: XCTestCase {
             d.beginCueAction()
             d.moveCue(forwardByMillimetres: -100, over: 0.3)
             d.moveCue(forwardByMillimetres: 120, over: 0.05)
+            letTheTipLetGo(d)
             return (d.cueBall?.velocity.length ?? 0, abs(d.cueBall?.spin.z ?? 0))
         }
 
@@ -888,6 +903,7 @@ final class FrameDriverTests: XCTestCase {
         d.beginCueAction()
         d.moveCue(forwardByMillimetres: -100, over: 0.3)
         d.moveCue(forwardByMillimetres: 120, over: 0.05)
+        letTheTipLetGo(d)
 
         // The shot is played with the spin the player set: the offset comes out of the same impulse,
         // `omega = (5/2) v k / r`.

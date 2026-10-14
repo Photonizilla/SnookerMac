@@ -305,6 +305,45 @@ public final class PhysicsWorld {
         return a / (1 + a * a).squareRoot()
     }
 
+    /// How much of the strike the ball has, `share` of the way through the contact: 0 when the tip takes
+    /// the standing ball, 1 when the leather lets it go.
+    ///
+    /// The tip and the ball are a **spring with damping in it**, and the ball is the mass at the end of it:
+    /// driven by a striker going at a steady speed, the ball answers
+    /// `1 - e^(-z w t) (cos w_d t - (z w / w_d) sin w_d t)`, which is nothing at all at the first touch,
+    /// everything at the release — by the contact's own `1 + e` — and in between it *builds*: the ball is
+    /// standing while the leather presses into it, and the whole of the strike is spent on it only as the
+    /// tip comes out again. The damping ratio is the one the tip's own restitution gives, and the frequency
+    /// is the one the Hertz time gives, so both of the contact's figures are the tip's.
+    static func cueContactShape(_ share: Double) -> Double {
+        let zeta = contactDampingRatio(forRestitution: cueTipRestitution)
+        let damping = zeta / (1 - zeta * zeta).squareRoot()
+        let through = share * Double.pi
+        return (1 - exp(-damping * through) * (cos(through) - damping * sin(through)))
+            / (1 + cueTipRestitution)
+    }
+
+    /// How far the leather is pressed into the ball, `share` of the way through the contact, in millimetres:
+    /// the same spring's own answer, `(v / w_d) e^(-z w t) sin w_d t`, with the **tip's** speed for `v`.
+    ///
+    /// It is nothing at the first touch and nothing again at the release, and the most of it in between —
+    /// 1.6 mm at a full charge, which is what the tip's own deflection for that speed is worth — so the tip
+    /// is seen to go **into** the ball and come back out of it, and the ball travels exactly as far in that
+    /// time as the tip does. See `cueTipDeflection(forCueSpeed:)`, which is the same depth read off the
+    /// tip's own strike.
+    private static func cueContactDeflection(_ contact: CueContact, at share: Double) -> Double {
+        let zeta = contactDampingRatio(forRestitution: cueTipRestitution)
+        let damping = zeta / (1 - zeta * zeta).squareRoot()
+        let through = share * Double.pi
+        // The spring's own profile, scaled so that the most it presses in is the depth the tip's own strike
+        // is worth (`cueTipDeflection`): the same leather, seen at the same speed, presses the same way.
+        let most = atan(1 / damping)
+        let peak = exp(-damping * most) * sin(most)
+        guard peak > 1e-9 else { return 0 }
+        return cueTipDeflection(forCueSpeed: contact.tipSpeed)
+            * exp(-damping * through) * sin(through) / peak
+    }
+
     /// Restitution of the tip against the ball: the speed the ball comes away with, over the speed the
     /// tip met it with. See `FrameDriver.ballSpeed`, which is the collision this is the restitution of.
     ///
@@ -643,10 +682,34 @@ public final class PhysicsWorld {
     /// Which balls the cue is touching, so that going into contact with one is reported once rather
     /// than on every step the contact lasts.
     private var ballsTheCueIsTouching: Set<Int> = []
-    /// The tip's hold on the cue ball just after a strike, if it still has it: the ball, and how long
-    /// of the hold is left. The hold is the contact itself — the leather on the ball for its own Hertz
-    /// time, which depends on how hard the shot is: see `cueTipContactSeconds(forCueSpeed:)`.
-    private var cueGrab: (ball: Int, seconds: Double)?
+    /// The strike being played: the ball the tip has just taken, what the ball is going to leave with, and
+    /// how far into the contact it is. Nil when no tip has the ball.
+    ///
+    /// A strike is not an instant. The tip takes the **standing** ball, the leather presses into it and
+    /// springs back out of it, and the ball is at the speed and spin the strike is worth only once the tip
+    /// has let it go: the contact is a spring with the ball at the end of it, and this is the two bodies of
+    /// it. The whole of that moment is the stroke's **one** contact, so nothing is reported for it — and the
+    /// ball is put in the set the cue is touching by hand, so that when the tip does let go there is nothing
+    /// to report until something comes back to the stick. See `grabTheCueBall`.
+    private struct CueContact {
+        var ball: Int
+        /// What the ball leaves with: its velocity, including the hop a low tip gives it, and its spin.
+        var velocity: Vec3
+        var spin: Vec3
+        /// The speed the *tip* is going at, which the compression of the leather is read from. Set from the
+        /// cue by `grabTheCueBall`.
+        var tipSpeed: Double
+        /// How long the tip is on the ball for — `cueTipContactSeconds(forCueSpeed:)`, set from the cue's own
+        /// speed by `grabTheCueBall` — and how much of it has gone.
+        var seconds: Double
+        var elapsed: Double
+    }
+    private var cueContact: CueContact?
+
+    /// Whether a strike's own **contact** is still being played: the tip has the ball and the ball has not
+    /// got the strike's velocity and spin yet. A test or a probe that reads what a strike has done waits for
+    /// this to be over. See `CueContact`.
+    public var aStrikeIsBeingPlayed: Bool { cueContact != nil }
     /// Each pocket and its cut, in `PocketID.allCases` order. The cuts are worked out once: the
     /// simulation asks for them on every ball on every step.
     private let pockets: [(id: PocketID, cut: PocketCut)]
@@ -1139,7 +1202,7 @@ public final class PhysicsWorld {
 
     // MARK: Cue strike
 
-    /// Applies a cue strike. `power` is the ball's speed along the cue in mm/s, `side` and `vertical`
+    /// Begins a cue strike. `power` is the ball's speed along the cue in mm/s, `side` and `vertical`
     /// are the tip's offsets from the middle of the ball as a fraction of its radius (clamped to
     /// `cueTipOffsetLimit`, the leather's own grip), and `elevation` is the angle the cue stands at, in
     /// radians — the cue's own elevation, which the game keeps at or above the player's stance
@@ -1153,6 +1216,13 @@ public final class PhysicsWorld {
     /// exactly; lifted, the spin axis tilts with the cue — side spin gains a barrel of spin about the
     /// line of the shot, and the ball is driven down into the cloth — and that tilt is what the cloth
     /// turns into the curve of a swerve.
+    ///
+    /// What the impulse works out is what the ball is **going to leave with**: the strike is not an instant,
+    /// and the ball has that velocity and spin only when the tip has pressed into it and let it go. This
+    /// begins the **contact**; `resolveTheCue` drives the ball through it, and `grabTheCueBall` — which a
+    /// stroke calls the moment it has struck — reads the tip's own time on the ball off the cue's speed. A
+    /// strike played with no cue on the table is on the ball for the tip's time for the speed the strike is
+    /// worth. See `CueContact`.
     public func applyCueStrike(cueBallID: Int, direction: Vec2, power: Double, side: Double,
                                vertical: Double, elevation: Double = 0) {
         guard let i = index(of: cueBallID) else { return }
@@ -1183,14 +1253,25 @@ public final class PhysicsWorld {
         let impulse = Vec3(struckDir.x * cosLift, struckDir.y * cosLift, -sinLift) * power
         var omega = tip.cross(impulse) * (5.0 / (2 * r * r))
 
-        balls[i].velocity = Vec2(impulse.x, impulse.y)
         // A lifted cue drives the ball into the cloth, and the cloth gives back some of the press as a
         // hop; a level cue with the tip below the middle pinches the ball the same way. A level cue at
         // the middle leaves the ball on the cloth.
-        balls[i].verticalVelocity = impulse.z
-            + max(0, -h / r) * Self.hopFromALowTip * power * cosLift
+        let leaving = Vec3(impulse.x, impulse.y,
+                           impulse.z + max(0, -h / r) * Self.hopFromALowTip * power * cosLift)
         omega.z = max(-260, min(260, omega.z))
-        balls[i].spin = omega
+        // The ball does **not** leave yet. A strike is not an instant: the tip takes the ball — standing
+        // where it is — and the leather presses into it and springs back out, and the ball has the velocity
+        // and spin above only once the tip has let it go. What this does is *begin* the contact; the ball
+        // is driven through it a step at a time by `resolveTheCue`. See `CueContact`.
+        //
+        // The contact's own two figures are the tip's, and the tip's speed is the ball's put back through
+        // the strike — `(1 + e) V / (1 + 2.5k²)` the other way about. A strike played with the cue on the
+        // table has `grabTheCueBall` refine them from the cue's actual speed, which is the same figure read
+        // off the stick itself; one played without it, as a test or a probe may, is read from the strike.
+        let offset = min(1, (s * s + h * h).squareRoot() / r)
+        let tipSpeed = power / Self.strikeSpeed(offset)
+        cueContact = CueContact(ball: cueBallID, velocity: leaving, spin: omega, tipSpeed: tipSpeed,
+                                seconds: Self.cueTipContactSeconds(forCueSpeed: tipSpeed), elapsed: 0)
         balls[i].height = Table.ballRadius
         balls[i].onTable = true
         balls[i].pottedInto = nil
@@ -1234,7 +1315,10 @@ public final class PhysicsWorld {
     public func grabTheCueBall(_ id: Int, with cue: Cue) {
         self.cue = cue
         guard index(of: id) != nil else { return }
-        cueGrab = (ball: id, seconds: PhysicsWorld.cueTipContactSeconds(forCueSpeed: cue.speed))
+        // How long the tip is on the ball is the contact's own Hertz time, read off the speed the cue is
+        // going at: a firmer shot is on the ball for less of it. See `cueTipContactSeconds(forCueSpeed:)`.
+        cueContact?.seconds = PhysicsWorld.cueTipContactSeconds(forCueSpeed: cue.speed)
+        cueContact?.tipSpeed = cue.speed
         ballsTheCueIsTouching.insert(id)
     }
 
@@ -1260,38 +1344,59 @@ public final class PhysicsWorld {
     /// the butt is pushed away from the axis. Either way it is a ball in play contacted by the player's
     /// equipment, which the rules call a foul (Rule 11(b)(vi)), so the contact is reported.
     private func resolveTheCue(dt: Double) {
+        // The **contact** of the strike being played comes first, and whether or not a cue is drawn: the tip
+        // has the ball and the ball is driven through the contact, and that is what the ball's velocity and
+        // spin are made of. See `CueContact`.
+        var held: CueContact?
+        if var contact = cueContact, let i = index(of: contact.ball) {
+            contact.elapsed += dt
+            let share = contact.seconds > 0 ? min(1, contact.elapsed / contact.seconds) : 1
+            // The ball is driven by the tip through the contact: it is standing when the tip takes it, and it
+            // has the whole of the strike's velocity and spin when the leather lets go.
+            let through = PhysicsWorld.cueContactShape(share)
+            balls[i].velocity = Vec2(contact.velocity.x, contact.velocity.y) * through
+            balls[i].verticalVelocity = contact.velocity.z * through
+            balls[i].spin = contact.spin * through
+            held = contact
+            if contact.elapsed >= contact.seconds {
+                // The leather has let go. The ball is left **exactly** at what the strike was worth, so that
+                // the step the contact happened to end on is not asked to be the last word on it.
+                balls[i].velocity = Vec2(contact.velocity.x, contact.velocity.y)
+                balls[i].verticalVelocity = contact.velocity.z
+                balls[i].spin = contact.spin
+                cueContact = nil
+            } else {
+                cueContact = contact
+            }
+        }
+
         guard let cue = cue else {
             ballsTheCueIsTouching.removeAll()
-            cueGrab = nil
             return
         }
 
         var touching: Set<Int> = []
-        // The tip's hold on the ball it has just struck: the leather has it, so the tip goes where the
-        // ball goes — the crown on the ball's surface — and the stick is not asked to collide with it.
-        // That whole moment is the *one* contact of the stroke, so nothing is reported for it.
-        var held: Int?
-        if let grab = cueGrab, let i = index(of: grab.ball) {
+        // The tip's own part of it: the tip goes where the ball it has goes — the crown pressed into it by
+        // the leather's own compression — and the stick is not asked to collide with the ball. That whole
+        // moment is the *one* contact of the stroke, so nothing is reported for it.
+        if let contact = held, let i = index(of: contact.ball) {
             let centre = Vec3(balls[i].position.x, balls[i].position.y, balls[i].height)
-            // The crown stands on the ball's surface, where the stick's own line meets it: the tip
-            // keeps its offset from the line through the ball's middle and sits a ball's radius away.
+            let share = contact.seconds > 0 ? min(1, contact.elapsed / contact.seconds) : 1
+            let pressedIn = PhysicsWorld.cueContactDeflection(contact, at: share)
             let toTheTip = cue.tip - centre
             let offset = toTheTip - cue.axis * toTheTip.dot(cue.axis)
             let across = min(offset.length, Table.ballRadius * 0.99)
-            let reach = (Table.ballRadius * Table.ballRadius - across * across).squareRoot()
+            let reach = max(0, (Table.ballRadius * Table.ballRadius - across * across).squareRoot()
+                            - pressedIn)
             let sideways = offset.length > 1e-9 ? offset.normalized * across : Vec3.zero
             self.cue?.tip = centre + sideways - cue.axis * reach
+            // The tip is going with the ball it has: what its own surface is doing at the contact is what the
+            // ball's is.
             self.cue?.speed = balls[i].velocity.dot(Vec2(cue.axis.x, cue.axis.y))
-            touching.insert(grab.ball)
-            held = grab.ball
-            if grab.seconds - dt <= 0 {
-                cueGrab = nil
-            } else {
-                cueGrab = (grab.ball, grab.seconds - dt)
-            }
+            touching.insert(contact.ball)
         }
         for i in balls.indices where balls[i].onTable {
-            guard balls[i].id != held else { continue }
+            guard balls[i].id != held?.ball else { continue }
             var ball = balls[i]
             let centre = Vec3(ball.position.x, ball.position.y, ball.height)
             guard let contact = cueContact(with: centre) else { continue }

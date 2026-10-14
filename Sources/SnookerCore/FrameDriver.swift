@@ -1512,6 +1512,14 @@ public final class FrameDriver {
             elapsed += 1.0 / 120.0
             updateCharge(at: (lastChargeTick ?? elapsed) + 1.0 / 120.0)
         }
+        // The **contact** the strike is made of is the cue's own, and the ball has nothing until the leather
+        // has let it go: the runner plays that out before it takes the stick off the table, or it would be
+        // taking the tip away from a ball it is still holding.
+        var contact = 0.0
+        while world.theCueIsOn(BallID.cue), contact < 0.05 {
+            update(dt: 1.0 / 240.0)
+            contact += 1.0 / 240.0
+        }
         standUp()
         world.cue = nil
         while mode == .simulating && elapsed < maxSeconds {

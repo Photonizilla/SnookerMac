@@ -19,12 +19,28 @@ final class PhysicsTests: XCTestCase {
         }
     }
 
+    /// Strikes the cue ball and **plays the contact out**: a strike is not an instant, and the ball has the
+    /// velocity and spin the strike is worth only once the tip has pressed into it and let it go. A test that
+    /// reads what a strike has done asks through this rather than through `applyCueStrike`; see
+    /// `PhysicsWorld.CueContact`.
+    @discardableResult
+    private func strike(_ world: PhysicsWorld, at power: Double, direction: Vec2 = Vec2(1, 0),
+                        side: Double = 0, vertical: Double = 0, elevation: Double = 0) -> PhysicsWorld {
+        world.applyCueStrike(cueBallID: BallID.cue, direction: direction, power: power,
+                             side: side, vertical: vertical, elevation: elevation)
+        while world.aStrikeIsBeingPlayed { world.step(dt: 1.0 / 4000.0) }
+        return world
+    }
+
     /// Rolls the cue ball until it comes to rest and returns how far it travelled along the cloth.
     /// The distance along the cloth, not the straight-line displacement: a ball that rattles off the
     /// cushions ends up near where it started however far it has run.
     private func pathUntilRest(_ world: PhysicsWorld, seconds: Double = 40) -> Double {
         var path = 0.0, t = 0.0
         var previous = world.balls[0].position
+        // The strike's own contact first: the ball is standing until the tip has let it go.
+        while world.aStrikeIsBeingPlayed { world.step(dt: 1.0 / 4000.0) }
+        previous = world.balls[0].position
         while t < seconds, world.balls[0].velocity.length > 0 {
             world.step(dt: 1.0 / 240.0)
             t += 1.0 / 240.0
@@ -49,7 +65,7 @@ final class PhysicsTests: XCTestCase {
         // off over the length of the return. The result is about a length and a half of cloth, not
         // five: five is what the rolling resistance alone would give on a table with no cushions.
         let w = world(cue: Vec2(200, 889))
-        w.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 2000, side: 0, vertical: 0.4)
+        strike(w, at: 2000, direction: Vec2(1, 0), side: 0, vertical: 0.4)
         let path = pathUntilRest(w)
         XCTAssertEqual(w.balls[0].velocity.length, 0, accuracy: 0.001, "ball must stop")
         XCTAssertGreaterThan(path, 1.2 * Table.length, "a firm shot should run up the table and back")
@@ -62,7 +78,7 @@ final class PhysicsTests: XCTestCase {
         // 0.098 m/s^2, so a ball rolling at 300 mm/s should still be rolling at about 100 mm/s
         // two seconds later. A club table, roughly twice that resistance, would have stopped it.
         let w = world(cue: Vec2(60, 889))
-        w.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 300, side: 0, vertical: 0.4)
+        strike(w, at: 300, direction: Vec2(1, 0), side: 0, vertical: 0.4)
         let before = w.balls[0].velocity.length
         run(w, seconds: 2)
         let drop = before - w.balls[0].velocity.length
@@ -509,12 +525,9 @@ final class PhysicsTests: XCTestCase {
     /// leaves the ball on the cloth.
     func testAHardTipBelowTheCentreLiftsTheCueBallOffTheCloth() {
         let low = world(cue: Vec2(1000, 889))
-        low.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 4000, side: 0, vertical: -0.5)
+        strike(low, at: 4000, direction: Vec2(1, 0), side: 0, vertical: -0.5)
         let level = world(cue: Vec2(1000, 889))
-        level.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 4000, side: 0, vertical: 0)
-
-        XCTAssertGreaterThan(low.balls[0].verticalVelocity, 0, "a hard low tip should lift the ball")
-        XCTAssertEqual(level.balls[0].verticalVelocity, 0, "a level tip should not")
+        strike(level, at: 4000, direction: Vec2(1, 0), side: 0, vertical: 0)
 
         var clock = 0.0
         var highest = Table.ballRadius
@@ -523,8 +536,20 @@ final class PhysicsTests: XCTestCase {
             clock += 1.0 / 240.0
             highest = max(highest, low.balls[0].height)
         }
+        // A hard low tip pinches the ball between the leather and the cloth, and the cloth springs it back
+        // up: the ball is driven into the bed through the strike's own contact and comes up off it, which is
+        // seen in how high it gets rather than in the velocity it had at the instant the tip met it.
         XCTAssertGreaterThan(highest, Table.ballRadius + 1, "the ball must actually leave the cloth")
         XCTAssertEqual(low.balls[0].height, Table.ballRadius, accuracy: 1e-9, "and come back down to it")
+
+        var levelClock = 0.0
+        var levelHighest = Table.ballRadius
+        while levelClock < 0.5 {
+            level.step(dt: 1.0 / 240.0)
+            levelClock += 1.0 / 240.0
+            levelHighest = max(levelHighest, level.balls[0].height)
+        }
+        XCTAssertEqual(levelHighest, Table.ballRadius, accuracy: 1e-9, "a level tip leaves it on the cloth")
     }
 
     func testFastBallDoesNotTunnelThroughAnotherBall() {
@@ -599,12 +624,12 @@ final class PhysicsTests: XCTestCase {
         // right of the ball. That turns it counter-clockwise from above — a positive turn about the
         // vertical — and squirt takes the ball away from the side struck, so it leaves to the left.
         let right = world(cue: Vec2(1000, 889))
-        right.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 1000, side: 0.5, vertical: 0)
+        strike(right, at: 1000, direction: Vec2(1, 0), side: 0.5, vertical: 0)
         XCTAssertGreaterThan(right.balls[0].spin.z, 0, "right side spin is a positive turn about the vertical")
         XCTAssertGreaterThan(right.balls[0].velocity.y, 0, "and the ball squirts away to the left")
 
         let left = world(cue: Vec2(1000, 889))
-        left.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 1000, side: -0.5, vertical: 0)
+        strike(left, at: 1000, direction: Vec2(1, 0), side: -0.5, vertical: 0)
         XCTAssertLessThan(left.balls[0].spin.z, 0, "left side spin is the other way about")
         XCTAssertLessThan(left.balls[0].velocity.y, 0, "and squirts away to the right")
     }
@@ -618,13 +643,13 @@ final class PhysicsTests: XCTestCase {
             let left = Vec2(-sin(yaw), cos(yaw))
 
             let follow = world(cue: Vec2(1000, 889))
-            follow.applyCueStrike(cueBallID: BallID.cue, direction: forward, power: 1000, side: 0, vertical: 0.5)
+            strike(follow, at: 1000, direction: forward, side: 0, vertical: 0.5)
             let tilt = Vec3(follow.balls[0].spin.x, follow.balls[0].spin.y, 0)
             XCTAssertGreaterThan(tilt.x * left.x + tilt.y * left.y, 0,
                                  "top spin should tilt about the striker's left at \(degrees) degrees")
 
             let screw = world(cue: Vec2(1000, 889))
-            screw.applyCueStrike(cueBallID: BallID.cue, direction: forward, power: 1000, side: 0, vertical: -0.5)
+            strike(screw, at: 1000, direction: forward, side: 0, vertical: -0.5)
             let back = Vec3(screw.balls[0].spin.x, screw.balls[0].spin.y, 0)
             XCTAssertLessThan(back.x * left.x + back.y * left.y, 0,
                               "screw back should tilt the other way at \(degrees) degrees")
@@ -634,17 +659,19 @@ final class PhysicsTests: XCTestCase {
     func testSideSpinComesOffACushionOnItsOwnSide() {
         // Right side spin grips the cushion and throws the ball that way as it comes back.
         let right = world(cue: Vec2(3000, 889))
-        right.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 1200, side: 0.5, vertical: 0)
+        strike(right, at: 1200, direction: Vec2(1, 0), side: 0.5, vertical: 0)
         runUntilOffTheCushion(right)
         XCTAssertLessThan(right.balls[0].velocity.y, 0, "right side spin comes off towards the right")
 
         let left = world(cue: Vec2(3000, 889))
-        left.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 1200, side: -0.5, vertical: 0)
+        strike(left, at: 1200, direction: Vec2(1, 0), side: -0.5, vertical: 0)
         runUntilOffTheCushion(left)
         XCTAssertGreaterThan(left.balls[0].velocity.y, 0, "and left side spin towards the left")
     }
 
     private func runUntilOffTheCushion(_ world: PhysicsWorld) {
+        // The strike's own contact first: the ball is standing until the tip has let it go.
+        while world.theCueIsOn(BallID.cue) { world.step(dt: 1.0 / 4000.0) }
         var t = 0.0
         while t < 6, world.balls[0].velocity.x > 0 {
             world.step(dt: 1.0 / 240.0)
@@ -985,6 +1012,65 @@ final class PhysicsTests: XCTestCase {
         XCTAssertEqual((times.last ?? 0) * 1000, 0.99, accuracy: 0.05, "and under a millisecond at 80")
     }
 
+    /// The **contact** of a strike, which is not an instant: the tip takes the ball while it is standing,
+    /// presses into it by the leather's own compression, drives it up to the speed and spin the strike is
+    /// worth, and lets go of it again — so the ball has nothing when the tip first has it and everything the
+    /// strike has made for it when the tip has finished with it.
+    func testAStrikeIsAContactTheBallIsDrivenThrough() {
+        let atTheBall = Vec3(600 - Table.ballRadius, 889, Table.ballRadius)
+        let cueSpeed = FrameDriver.maxCueSpeed
+        let struckAwayAt = FrameDriver.ballSpeed(fromCueSpeed: cueSpeed, tipOffset: 0)
+        let onTheBallFor = PhysicsWorld.cueTipContactSeconds(forCueSpeed: cueSpeed)
+
+        let w = world(cue: Vec2(600, 889))
+        w.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: struckAwayAt, side: 0, vertical: 0)
+        w.grabTheCueBall(BallID.cue, with: Cue(tip: atTheBall, axis: Vec3(1, 0, 0), speed: cueSpeed))
+
+        // The tip has the ball and the ball is **standing**: nothing of the strike is on it yet.
+        XCTAssertTrue(w.aStrikeIsBeingPlayed, "the strike is a contact, and it has begun")
+        XCTAssertEqual(w.balls[0].velocity.length, 0, accuracy: 1e-9, "the ball is standing under the tip")
+        XCTAssertEqual(w.balls[0].spin.length, 0, accuracy: 1e-9, "and it is not turning")
+
+        // Through it: the tip presses into the ball and lets it go again, and the ball comes up to the
+        // strike's own speed as it does.
+        var pressedIn = 0.0
+        var speeds: [Double] = []
+        var elapsed = 0.0
+        while w.aStrikeIsBeingPlayed, elapsed < onTheBallFor * 2 {
+            w.step(dt: 1.0 / 20000.0)
+            elapsed += 1.0 / 20000.0
+            guard let cue = w.cue else { break }
+            let centre = Vec3(w.balls[0].position.x, w.balls[0].position.y, w.balls[0].height)
+            pressedIn = max(pressedIn, Table.ballRadius - (cue.tip - centre).length)
+            speeds.append(w.balls[0].velocity.length)
+        }
+        XCTAssertEqual(elapsed, onTheBallFor, accuracy: 0.0002,
+                       "the tip is on the ball for its own Hertz time and no other")
+        XCTAssertGreaterThan(pressedIn, 1.4, "the leather is pressed into the ball — the tip's own depth")
+        XCTAssertLessThan(pressedIn, 1.8, "and the most of it is the tip's own deflection for that speed")
+        // The ball is driven up from nothing through the contact. A damped spring's own response passes a
+        // hair above the speed it settles at — the damper is holding the ball back over the last of the
+        // release — so what is asked of it is that it starts from nothing and ends on the strike's speed.
+        XCTAssertLessThan(speeds.first ?? 1, struckAwayAt * 0.1, "the ball is driven up from nothing")
+        XCTAssertEqual(speeds.last ?? 0, struckAwayAt, accuracy: 1,
+                       "to exactly the speed the strike is worth")
+        XCTAssertEqual(w.balls[0].velocity.length, struckAwayAt, accuracy: 1,
+                       "which is what the tip leaves it with")
+        XCTAssertFalse(w.aStrikeIsBeingPlayed, "and the contact is over")
+
+        // An off-centre tip turns the ball through its own contact the same way: no spin while it is being
+        // pressed into, and the whole of the turn the strike is worth when the tip has let it go.
+        let offCentre = world(cue: Vec2(600, 889))
+        offCentre.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 3000, side: 0.5,
+                                 vertical: 0)
+        offCentre.grabTheCueBall(BallID.cue, with: Cue(tip: atTheBall, axis: Vec3(1, 0, 0), speed: 2000))
+        XCTAssertEqual(offCentre.balls[0].spin.z, 0, accuracy: 1e-9, "no turn before the tip presses")
+        while offCentre.aStrikeIsBeingPlayed { offCentre.step(dt: 1.0 / 20000.0) }
+        XCTAssertEqual(offCentre.balls[0].spin.z,
+                       2.5 * offCentre.balls[0].velocity.length * 0.5 / Table.ballRadius, accuracy: 1,
+                       "and the turn the strike is worth once it has been driven through the contact")
+    }
+
     /// The tip is a dome, and it is what puts a stop to a cue driven on into the table: the dome comes
     /// up against the cloth under it, or the wood of the cushion and the rail beside it.
     func testTheTipOfTheCueMeetsTheTable() {
@@ -1165,8 +1251,7 @@ final class PhysicsTests: XCTestCase {
         -> (spin: Vec3, vertical: Double, veer: Double) {
         let ball = Ball(id: BallID.cue, color: .white, position: Vec2(400, Table.centreY))
         let w = PhysicsWorld(balls: [ball])
-        w.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: power,
-                         side: side, vertical: 0, elevation: elevation)
+        strike(w, at: power, side: side, elevation: elevation)
         let struck = w.balls[0]
         run(w, seconds: 0.9)
         return (struck.spin, struck.verticalVelocity, w.balls[0].position.y - Table.centreY)
@@ -1186,7 +1271,8 @@ final class PhysicsTests: XCTestCase {
         XCTAssertGreaterThan(lifted.spin.x, 20,
                              "a lifted cue tips the spin into a barrel about the line of the shot")
         XCTAssertGreaterThan(lifted.spin.z, 50, "with the side spin still there")
-        XCTAssertLessThan(lifted.vertical, -500, "and drives the ball down into the cloth")
+        XCTAssertGreaterThan(lifted.vertical, 0,
+                             "and drives the ball into the cloth, which springs it back up")
         XCTAssertLessThan(lifted.veer, level.veer - 150,
                           "so it comes off the line of aim — the swerve")
     }
@@ -1197,7 +1283,7 @@ final class PhysicsTests: XCTestCase {
         let lifted = liftedStrike(elevation: 30 * .pi / 180, side: 0)
         XCTAssertEqual(lifted.spin.length, 0, accuracy: 1e-6, "no spin, so nothing for the cloth to curve")
         XCTAssertEqual(lifted.veer, 0, accuracy: 0.01, "the ball runs straight up the table")
-        XCTAssertLessThan(lifted.vertical, -500, "though it is still driven into the cloth")
+        XCTAssertGreaterThan(lifted.vertical, 0, "though it is still driven into the cloth and comes back off")
     }
 
     /// A lifted cue hard enough puts the ball over another one. Going over part of a ball **before
@@ -1317,7 +1403,7 @@ final class PhysicsTests: XCTestCase {
         // metres more than the cloth can account for. The shot starts at the baulk end and dies a
         // handsbreadth short of the far cushion, so nothing but the cloth is in the reckoning.
         let world = self.world(cue: Vec2(200, 889))
-        world.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 800, side: 0, vertical: 0.4)
+        strike(world, at: 800, direction: Vec2(1, 0), side: 0, vertical: 0.4)
         let travelled = pathUntilRest(world)
         let expected = 800.0 * 800.0 / (2 * PhysicsWorld.rollingResistance * PhysicsWorld.gravity)
         XCTAssertEqual(travelled, expected, accuracy: 150,
@@ -1327,7 +1413,7 @@ final class PhysicsTests: XCTestCase {
     func testACushionSendsABallBackAlongTheLineItCameInOn() {
         // Straight into a cushion with no side spin: the ball comes straight back.
         let world = self.world(cue: Vec2(3000, 889))
-        world.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 1200, side: 0, vertical: 0.4)
+        strike(world, at: 1200, direction: Vec2(1, 0), side: 0, vertical: 0.4)
         var t = 0.0
         while t < 6, world.balls[0].velocity.x > 0 {
             world.step(dt: 1.0 / 240.0)
@@ -1341,7 +1427,7 @@ final class PhysicsTests: XCTestCase {
         // Side spin off a cushion is real, but it must stay modest: a ball sent square into a
         // cushion should not come off at a wild angle.
         let world = self.world(cue: Vec2(3000, 889))
-        world.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 1200, side: 0.5, vertical: 0.4)
+        strike(world, at: 1200, direction: Vec2(1, 0), side: 0.5, vertical: 0.4)
         var t = 0.0
         while t < 6, world.balls[0].velocity.x > 0 {
             world.step(dt: 1.0 / 240.0)
