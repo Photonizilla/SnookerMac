@@ -1487,6 +1487,83 @@ final class FrameDriverTests: XCTestCase {
                       "and it is nowhere it may not stand")
     }
 
+    /// Charges a shot to `power`, lets it go, and runs the stroke with **no hand on the cue** — the
+    /// mouse is never moved — reporting how far the tip was carried from the middle of the ball it
+    /// struck, how fast it was going as it went, and over how many frames.
+    private func chargedShotFollowThrough(power: Double)
+        -> (travelled: Double, speeds: [Double], movingFrames: Int) {
+        let d = cueActionSetupInTheOpen()
+        d.beginCharge(at: 0)
+        // The meter fills from `minimumChargePower` over 1.1 s, so this is the time that leaves it at
+        // the power asked for.
+        d.updateCharge(at: (power - FrameDriver.minimumChargePower) * 1.1)
+        XCTAssertEqual(d.power, power, accuracy: 0.001, "the charge is where the probe asked for")
+        d.releaseShot()
+        let from = d.strokeWasPlayedFrom
+        var travelled = 0.0
+        var speeds: [Double] = []
+        var movingFrames = 0
+        var frames = 0
+        while d.mode == .simulating, frames < 60 * 30 {
+            d.update(dt: 1.0 / 120.0)
+            frames += 1
+            guard let cue = d.cueOnTheTable else { break }
+            let distance = Vec2(cue.tip.x, cue.tip.y).distance(to: from)
+            if distance > travelled + 0.001 {
+                travelled = distance
+                movingFrames += 1
+                speeds.append(d.cueTravelSpeed)
+            }
+        }
+        return (travelled, speeds, movingFrames)
+    }
+
+    /// A **charged** shot is carried through by the game itself — the hand is on the button and not on the
+    /// cue — and at **one speed all the way**: the speed the stick struck the ball with, held constant for
+    /// the whole of the follow-through. Nothing of the hand is in it.
+    func testAChargedShotIsCarriedThroughAtTheSpeedItStruckWith() {
+        let full = chargedShotFollowThrough(power: 1)
+        let strikeSpeed = FrameDriver.maxPower / (1 + FrameDriver.cueTipRestitution)
+        XCTAssertEqual(full.travelled, FrameDriver.maxFollowThrough, accuracy: 2,
+                       "a full charge is carried the whole follow-through, measured from the ball's middle")
+        XCTAssertGreaterThan(full.speeds.count, 2, "and the stick was carried on")
+        // Every **full** step of the travel is at the speed the stick struck with; the last step is the
+        // short one that lands the tip exactly on the length, and is the only one that is slower.
+        for speed in full.speeds.dropLast() {
+            XCTAssertEqual(speed, strikeSpeed, accuracy: strikeSpeed * 0.02,
+                           "at the speed it struck with, the same speed all the way")
+        }
+        XCTAssertLessThanOrEqual(full.speeds.last ?? 0, strikeSpeed, "and never faster than the strike")
+        // The travel takes the length over that speed, give or take the strike's own hold — which carries
+        // the tip with the ball for a fraction of the first frame — and the short step at the end.
+        XCTAssertEqual(Double(full.movingFrames), full.travelled / strikeSpeed * 120, accuracy: 3,
+                       "and the travel takes the length over that speed, neither hurrying nor dawdling")
+    }
+
+    /// The length of that follow-through is **linear in the strength** of the shot: the gentlest a charge
+    /// will go is `leastChargedFollowThrough` and full power is the whole of `maxFollowThrough`, with the
+    /// shots between them in proportion.
+    func testAChargedShotsFollowThroughIsLinearInItsStrength() {
+        XCTAssertEqual(FrameDriver.chargedFollowThroughLength(of: FrameDriver.minimumChargePower),
+                       FrameDriver.leastChargedFollowThrough, accuracy: 0.001,
+                       "the gentlest the meter will go is the shortest follow-through")
+        XCTAssertEqual(FrameDriver.chargedFollowThroughLength(of: 1), FrameDriver.maxFollowThrough,
+                       accuracy: 0.001, "and full power is all of it")
+        let halfway = (FrameDriver.minimumChargePower + 1) / 2
+        XCTAssertEqual(FrameDriver.chargedFollowThroughLength(of: halfway),
+                       (FrameDriver.leastChargedFollowThrough + FrameDriver.maxFollowThrough) / 2,
+                       accuracy: 0.001, "half way up the strength is half way along the length")
+
+        let gentle = chargedShotFollowThrough(power: FrameDriver.minimumChargePower)
+        let half = chargedShotFollowThrough(power: 0.5)
+        let full = chargedShotFollowThrough(power: 1)
+        XCTAssertEqual(gentle.travelled, FrameDriver.leastChargedFollowThrough, accuracy: 2,
+                       "and the gentlest charge is carried the shortest distance of all")
+        XCTAssertEqual(half.travelled, FrameDriver.chargedFollowThroughLength(of: 0.5), accuracy: 2,
+                       "a half-charged shot is carried half way along")
+        XCTAssertEqual(full.travelled, FrameDriver.maxFollowThrough, accuracy: 2)
+    }
+
     /// The frame reports every contact as it happens — what kind, where on the table, and how hard —
     /// and reports nothing it did not make: the view plays what it is handed and has nothing else.
     func testTheFrameReportsTheContactsItMade() {
