@@ -4024,9 +4024,11 @@ enum Snapshots {
     /// **average** of the push, which a flick's last frame is faster than — so a soft shot with the hand
     /// going on through it was called a second hit **14 ms** after the first contact, over and over, which
     /// is the foul the player met as coming from nowhere. The stick is carried forward no faster than it
-    /// was going when it struck the ball now (`FrameDriver.carryTheCue`), and this plays the same shot ten
-    /// ways — the hand stopping on the ball, going on at the same pace, easing back, snapping through a
-    /// soft one, and heavy side — and reports which of them are second hits and which are follow-throughs.
+    /// was going when it struck the ball (`FrameDriver.carryTheCue`), and the travel it is given is made a
+    /// step at a time by the simulation, along with the balls (`PhysicsWorld.theCueIsToBeCarriedBy`). This
+    /// plays the same shot ten ways — the hand stopping on the ball, going on at the same pace, easing back,
+    /// snapping through a soft one, and heavy side — and reports which of them are second hits and which are
+    /// follow-throughs.
     /// A ball that comes back to a stick left standing is a real foul, and is still reported.
     private static func doubleHitProbe() {
         print("double hit probe (the cue action, with the hand going on through the ball)")

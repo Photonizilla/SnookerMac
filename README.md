@@ -17,7 +17,7 @@ Open **`Snooker.xcodeproj`**. Three targets:
 |---|---|---|
 | `SnookerCore` | macOS framework | the game logic: vectors, table, physics, rules, frame driver, player camera |
 | `Snooker` | macOS app | the window, the SpriteKit HUD and the SceneKit table; links and embeds `SnookerCore` |
-| `SnookerCoreTests` | unit test bundle | the 226 tests, linked against `SnookerCore` |
+| `SnookerCoreTests` | unit test bundle | the 233 tests, linked against `SnookerCore` |
 
 Press **Run** (`Cmd+R`) to build and launch, **Test** (`Cmd+U`) to run the suite. The
 `Snooker` scheme is shared, so it works from a fresh checkout.
@@ -980,7 +980,7 @@ Sources/SnookerApp/           app target: the Mac app
   Table3D.swift               SceneKit table, lights, cue, balls and the player's eye
   GameAudio.swift             the sounds: what each contact plays, and the engine that plays it
   Snapshots.swift             offscreen renders and text reports, for checking the 3D view
-Tests/SnookerCoreTests/       test target: 226 tests (85 rules, 67 physics, 62 end-to-end, 12 camera)
+Tests/SnookerCoreTests/       test target: 233 tests (85 rules, 69 physics, 67 end-to-end, 12 camera)
 Scripts/build-app.sh          optional command-line build that assembles build/Snooker.app
 ```
 
@@ -1099,8 +1099,8 @@ owns the authoritative ball layout (positions and spotting).
   how long the tip is **on the ball** (`cueTipContactSeconds(forCueSpeed:)`). A strike is not an
   instant: the leather presses into the ball and springs back out, and the time that takes is the Hertz
   contact time, which narrows as the shot gets firmer — a fifth root of the speed, so a Shore D 70 tip is
-  on the ball about 1.4 ms at a full charge, 2 ms at a gentle one, and presses 1.6 mm into it at the
-  hardest. That whole moment is **one contact** of the cue and the cue ball
+  on the ball about 1.4 ms at a full charge, 2.5 ms at the gentlest the meter will play, and presses
+  1.6 mm into it at the hardest. That whole moment is **one contact** of the cue and the cue ball
   (`PhysicsWorld.grabTheCueBall`), read off the cue's own speed for both ways of playing the stroke. The
   tip is carried with the ball while it has hold of it, nothing is reported for it, and the ball is only
   free of the cue once the leather has let go; a contact made after that is a second one, the double hit
@@ -1156,7 +1156,7 @@ owns the authoritative ball layout (positions and spotting).
   exactly the cue's own speed — `√0.3` of a radius at a level cue, which is why a tip inside that is a
   shot the cue cannot catch however hard it is played. Past it — heavy side or screw, where the ball
   leaves *slower* than the stick was going — the cap no longer separates the two, and the margin is
-  thin rather than gone: the probe's heavy-side case comes out with the ball at 744 mm/s against a stick
+  thin rather than gone: the probe's heavy-side case comes out with the ball at 740 mm/s against a stick
   capped at 840, and it is still a follow-through rather than a foul. Those offsets are the miscue the
   widget's own lines warn about. See `PhysicsWorld.spinRange`.
 
@@ -1379,7 +1379,7 @@ owns the authoritative ball layout (positions and spotting).
 xcodebuild -project Snooker.xcodeproj -scheme Snooker -destination 'platform=macOS' test
 ```
 
-or press `Cmd+U` in Xcode. 226 tests: the rules tests build situations directly (for example
+or press `Cmd+U` in Xcode. 233 tests: the rules tests build situations directly (for example
 "Black is the only ball left, so the first pot ends the frame"), the end-to-end tests place
 the cue ball, aim, shoot, run the simulation and check the adjudication, and the camera
 tests check where the player's eye ends up and where it is looking.

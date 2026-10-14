@@ -73,7 +73,7 @@ public final class FrameDriver {
     /// about a shot is measured against — the strength meter's far end, and the speed a centre-ball strike
     /// sends the ball away at. Both ways of playing a shot set the **cue's** own speed
     /// (`maxCueSpeed`) and the ball's speed comes out of the strike: see `ballSpeed(fromCueSpeed:tipOffset:)`
-    /// and `beginStroke(cueSpeed:followThrough:)`.
+    /// and `beginStroke(cueSpeed:)`.
     public static let maxPower: Double = 6000
 
     // Aiming
@@ -741,10 +741,11 @@ public final class FrameDriver {
 
     /// Hands the stick to the game's own cue action, at the power the meter was let go at.
     ///
-    /// The setting-up is `beginCueAction`'s: a cue action and a charge are two ways of playing the same
-    /// stroke and the beat of the script is where the one becomes the other. What the meter leaves behind
-    /// is the **speed** the cue is brought up to, and the **length** the shot follows through — every
-    /// other figure comes off those two, see `ChargedStroke`.
+    /// The setting-up is `beginCueAction`'s, because a cue action and a charge are two ways of playing the
+    /// same stroke and this is where the one becomes the other: the cue is taken up as the mouse takes it
+    /// up, and the script drives it from there. What the meter leaves behind is the **speed** the cue is
+    /// brought up to, and the **length** the shot follows through — every other figure comes off those two,
+    /// see `ChargedStroke`.
     private func startTheChargedStroke() {
         let followThrough = FrameDriver.chargedFollowThroughLength(of: power)
         let pullBack = min(maximumCueDraw,
@@ -1188,9 +1189,6 @@ public final class FrameDriver {
         beginStroke()
     }
 
-    /// Plays a stroke. `ballSpeed` is the speed the cue ball leaves at when the caller has worked it
-    /// out (the cue action does, from the cue's own speed); otherwise it comes from the charged power.
-    /// How the stick is carried **after** the strike: by the player's hand, or by the shot itself.
     /// Plays the stroke: the **cue's** own speed is what the caller sets, and everything the cue ball does
     /// comes out of that and the point on the ball the tip is striking — see
     /// `ballSpeed(fromCueSpeed:tipOffset:)`.
@@ -1268,12 +1266,12 @@ public final class FrameDriver {
     public private(set) var cueTravelSpeed: Double = 0
 
     /// Puts the stick where the strike left it: just clear of the ball, pointing where the shot went,
-    /// and travelling at the speed the shot was played at — so the follow-through is the player's own
-    /// mouse rather than an animation.
+    /// and travelling at the speed the shot was played at — so what carries it on through the ball is
+    /// the stroke's own hand, the mouse's or the game's, and not a movement of the stick's own.
     ///
-    /// The tip is a dome of `Table.cueGirth`'s own radius in the physics, so the *end* of the stick
-    /// stands that radius plus a hair off the middle of the ball when it is at the ball: the tip's
-    /// skin is what touched it, and the solid end has to stay out of it.
+    /// The tip is a dome of `Table.cueTipCurvature` in the physics, so the *end* of the stick — the
+    /// crown of the tip — stands a ball's radius plus a hair off the middle of the ball when it is at
+    /// the ball: the tip's skin is what touched it, and the solid end has to stay out of it.
     private func placeTheCueAfterTheStrike(of cue: Ball, at speed: Double) {
         let (tipAtContact, axis) = PhysicsWorld.cueLine(
             ballCentre: Vec3(cue.position.x, cue.position.y, Table.ballRadius),

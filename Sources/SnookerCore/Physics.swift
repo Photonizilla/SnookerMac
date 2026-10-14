@@ -47,11 +47,11 @@ public enum PhysicsEvent: Equatable, Sendable {
 /// along `axis`, with the tip travelling along that axis at `speed`.
 ///
 /// The cue is the player's hand and it is many times the weight of a ball, so the physics treats it as
-/// **infinitely heavy**: nothing a ball does to it moves it. It is not integrated at all — the player's
-/// mouse sets its speed and the box carries it along — and every ball it meets is answered as a
-/// collision with a body that does not budge. That is also why the tip's own limit — the friction of
-/// the leather, see `PhysicsWorld.cueTipFriction` — is what settles the spin rather than the cue being
-/// knocked off line.
+/// **infinitely heavy**: nothing a ball does to it moves it. It is not integrated at all — the stroke gives
+/// it its travel along the stick's own line and the simulation carries it along a step at a time
+/// (`PhysicsWorld.theCueIsToBeCarriedBy`) — and every ball it meets is answered as a collision with a body
+/// that does not budge. That is also why the tip's own limit — the friction of the leather, see
+/// `PhysicsWorld.cueTipFriction` — is what settles the spin rather than the cue being knocked off line.
 public struct Cue: Sendable, Equatable {
     /// The tip's end, in the table's own coordinates: x and y across the cloth, z above it.
     public var tip: Vec3
@@ -232,7 +232,7 @@ public final class PhysicsWorld {
     /// `t = 2.87 (m² / (R E² v))^(1/5)`. It **narrows** as the shot gets firmer — a fifth root, so a
     /// shot eight times as hard is on the ball for about two thirds of the time — and the whole of it is
     /// the moment the tip has the ball, which is the stroke's **one contact** (see `grabTheCueBall`). A
-    /// Shore D 70 tip is on the ball for about 1.4 ms at a full charge and about 2 ms at the gentlest
+    /// Shore D 70 tip is on the ball for about 1.4 ms at a full charge and about 2.5 ms at the gentlest
     /// shot the meter will play, which is the range cue tips are measured in.
     public static func cueTipContactSeconds(forCueSpeed cueSpeed: Double,
                                             tipAt shoreD: Double = cueTipShoreD) -> Double {
@@ -423,7 +423,7 @@ public final class PhysicsWorld {
     /// is at `tip` and the stick runs back along `axis`.
     ///
     /// The tip is a spherical cap of `Table.cueTipCurvature` centred on the stick's axis
-    /// (`Table.cueGirth` is the half-width it is cut off at), so the lowest point of the tip is the
+    /// (`Table.cueTipRadius` is the half-width it is cut off at), so the lowest point of the tip is the
     /// point of that sphere pointing straight down — while that direction is within the cap. Once the
     /// cue is stood up past the cap's own half-angle, the *rim* is the lowest part instead, and it is
     /// the rim that reaches the cloth first.
@@ -1331,9 +1331,9 @@ public final class PhysicsWorld {
 
     /// Whether the ball `id` is on the stick: in the tip's own hold after a strike, or touching it.
     ///
-    /// It is how the stroke outside the physics tells when the **cue ball has left the cue** — the last
-    /// moment the leather has it, which is where a charged shot's follow-through takes its beat. See
-    /// `FrameDriver.carryTheChargedFollowThrough`.
+    /// It is how anything outside the physics tells when the **cue ball has left the cue** — the last moment
+    /// the leather has it — and how a test says that the tip has finished with the ball it struck. See
+    /// `CueContact`.
     public func theCueIsOn(_ id: Int) -> Bool {
         ballsTheCueIsTouching.contains(id)
     }
