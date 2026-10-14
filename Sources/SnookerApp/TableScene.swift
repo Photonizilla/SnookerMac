@@ -2297,11 +2297,14 @@ final class TableScene: SKScene {
         let dt = lastUpdateTime == 0 ? 1.0 / 120.0 : min(0.05, currentTime - lastUpdateTime)
         lastUpdateTime = currentTime
 
-        // The balls are stepped before the cue is moved by the mouse, so that a ball that is already
-        // running away from the tip is given its head first: a player pushing the mouse forward on the
-        // frame of the strike must not shove the tip into the ball the cue has just sent away.
         applyWalking(dt: dt)
         controller.updateCharge(at: CACurrentMediaTime())
+        // The mouse's travel is handed to the stroke **before** the frame's steps, and the stick is carried by
+        // the simulation along with the balls — a step at a time — rather than jumping a frame's worth at
+        // once: a player pushing the mouse forward on the frame of the strike cannot shove the tip into a ball
+        // that is already running away from it, and the tip and the balls are moved together. See
+        // `FrameDriver.carryTheCue` and `PhysicsWorld.theCueIsToBeCarriedBy`.
+        applyCueTravel(dt: dt)
         if controller.mode == .simulating {
             let finished = controller.update(dt: dt)
             if finished { requestRefresh() }
@@ -2310,7 +2313,6 @@ final class TableScene: SKScene {
             // in the air: it is let fall the rest of the way here, between strokes.
             controller.letTheBallsFall(dt: dt)
         }
-        applyCueTravel(dt: dt)
         if viewMode == .firstPerson {
             table3D?.update(with: controller, dt: dt)
         }

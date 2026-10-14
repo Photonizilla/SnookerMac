@@ -1033,8 +1033,13 @@ owns the authoritative ball layout (positions and spotting).
   convention every other part of the physics reads: throw and cushion grip both take their
   direction from it.
 - **The cue is a body, and it is infinitely heavy.** It is the player's hand, not a projectile: the
-  simulation never moves it — the mouse does, along the stick's own line — and nothing a ball does to
-  it moves it either. What it has is a **speed**, and every ball it meets is answered as a collision
+  mouse gives it its travel along the stick's own line, and the simulation **makes that travel a step at a
+  time, along with the balls** (`PhysicsWorld.theCueIsToBeCarriedBy`) rather than jumping a frame's worth at
+  once — which is what a stick does, and is what decides whether one can run a ball down at all: a cue at a
+  steady speed cannot catch a ball running away from it, and it *can* still catch a ball that an object ball
+  has stopped, which is the double hit that keeps a player off shots with the cue ball very close to what it
+  is playing at. Nothing a ball does to the cue moves it either. What it has besides its place is a
+  **speed**, and every ball it meets is answered as a collision
   with a body that does not budge. The tip is a leather face square to the cue, so a ball in front of
   it is struck **along the cue's own axis** with the tip's restitution — 0.75 for a Shore D 70 tip, and
   `PhysicsWorld.cueTipRestitution` is where that comes from — and the ball behind it

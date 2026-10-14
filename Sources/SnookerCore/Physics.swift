@@ -1338,34 +1338,52 @@ public final class PhysicsWorld {
         ballsTheCueIsTouching.contains(id)
     }
 
-    /// Whether the **tip** standing at `tip`, the stick running back along `axis`, would be on the ball `id`
-    /// — the same test the contact makes of it (`cueContact`). A stroke outside the physics asks this to
-    /// stop itself: the tip may be carried forward no further than the ball it is playing at, whatever step
-    /// the frame is taking it in.
-    public func theCueTipWouldTouch(_ id: Int, at tip: Vec3, along axis: Vec3) -> Bool {
-        guard let i = index(of: id), balls[i].onTable, let original = cue else { return false }
-        var probe = original
-        probe.tip = tip
-        probe.axis = axis
-        cue = probe
-        let contact = cueContact(with: Vec3(balls[i].position.x, balls[i].position.y, balls[i].height))
-        cue = original
-        return contact != nil
-    }
+    /// How far the stick is to be carried **this frame**, in millimetres along its own axis, and the speed it
+    /// is being driven at. The stroke hands the travel in once a frame — see `FrameDriver.carryCue` — and the
+    /// simulation **walks it out a step at a time**, with the balls: the tip goes along with them rather than
+    /// jumping a whole frame's worth once a frame.
+    ///
+    /// That is the whole of the cue's physics after the strike, and it is what a real stick does. A cue going
+    /// at a constant speed can never run down a ball it has sent away, because the ball leaves at `1 + e`
+    /// times the cue's speed and the gap only grows; and a cue *can* still catch a ball that has been stopped
+    /// by an object ball, which is the double hit a real player cannot play out of when the cue ball is close
+    /// to what it is playing at — the very shot the foul exists to prevent. See `resolveTheCue`.
+    public var theCueIsToBeCarriedBy: Double = 0
+    /// The speed the stroke is driving the stick at, in mm/s: what the tip's own surface is doing at anything
+    /// it meets, and the rate the travel above is walked out at.
+    public var theCueIsDrivenAt: Double = 0
+    /// How much of it the frame's steps have made. The stroke sets it back to nothing as it hands the frame's
+    /// travel in, and reads it back for the speed it is showing.
+    public var theCueWasCarriedBy: Double = 0
 
     /// Answers every ball the cue has run into.
     ///
-    /// The cue's **position** is the player's: the mouse puts it where it is (see
-    /// `FrameDriver.carryTheCue`), and the simulation never moves it, so a stick left alone stays
-    /// where it is left. What the cue does have is a **speed**, which is what its surface is doing at
-    /// the contact. The cue does not budge for a ball either — it is the player's hand and has infinite
-    /// mass — so a contact is the ball's alone to answer: it is pushed out of the stick, turned along
+    /// The cue's **travel** is the player's, step by step: the stroke asks for so many millimetres a frame
+    /// and this walks them out (see `theCueIsToBeCarriedBy`), so a stick left alone stays where it is left
+    /// and one being moved goes **with the balls** rather than jumping a frame's worth at once. What the cue
+    /// has besides its place is a **speed**, which is what its surface is doing at the contact. The cue does
+    /// not budge for a ball either — it is the player's hand and has infinite mass — so a contact is the
+    /// ball's alone to answer: it is pushed out of the stick, turned along
     /// the contact normal with the restitution of whatever part it met, and rubbed along the face by
     /// that part's friction. A ball met by the **tip's face** is struck along the cue's own axis (the
     /// leather deforms over the ball and pushes it squarely); one met by the **side** of the shaft or
     /// the butt is pushed away from the axis. Either way it is a ball in play contacted by the player's
     /// equipment, which the rules call a foul (Rule 11(b)(vi)), so the contact is reported.
     private func resolveTheCue(dt: Double) {
+        // The stick's **own travel** for this frame, walked out with the balls: it is what the stroke's hand —
+        // the player's or the game's — has asked for, and making it a step at a time is the whole of the cue's
+        // physics after the strike. A cue going at a constant speed cannot run down the ball it has sent away
+        // (the ball leaves at `1 + e` times the cue's speed and the gap only grows), and it *can* still catch a
+        // ball that has been stopped by an object ball — the double hit a real player cannot play out of when
+        // the cue ball is close to what it is playing at. See `theCueIsToBeCarriedBy`.
+        let stillToBeCarried = theCueIsToBeCarriedBy - theCueWasCarriedBy
+        if cueContact == nil, stillToBeCarried != 0 {
+            // Not while the tip has the ball: it is the ball's own then, and is placed by it.
+            let asked = theCueIsDrivenAt * dt
+            let travel = abs(asked) < abs(stillToBeCarried) ? asked : stillToBeCarried
+            theCueWasCarriedBy += carryTheCueTip(alongTheAxisBy: travel)
+        }
+
         // The **contact** of the strike being played comes first, and whether or not a cue is drawn: the tip
         // has the ball and the ball is driven through the contact, and that is what the ball's velocity and
         // spin are made of. See `CueContact`.
@@ -1474,6 +1492,27 @@ public final class PhysicsWorld {
             events.append(.cueTouched(ball: id, after: clock, speed: abs(cue.speed)))
         }
         ballsTheCueIsTouching = touching
+    }
+
+    /// Moves the tip along the stick's own axis by `travel`, or as much of it as the table allows, and returns
+    /// what was moved. A stick is a stick: the cloth and the cushion and the rail stop it, and it stops there.
+    private func carryTheCueTip(alongTheAxisBy travel: Double) -> Double {
+        guard let cue = cue, travel != 0 else { return 0 }
+        let axis = cue.axis
+        func clear(_ moved: Double) -> Bool {
+            theCueTipCanStand(at: cue.tip + axis * moved, along: axis)
+        }
+        var allowed = travel
+        if !clear(travel) {
+            var low = 0.0, high = travel
+            for _ in 0..<10 {
+                let middle = (low + high) / 2
+                if clear(middle) { low = middle } else { high = middle }
+            }
+            allowed = low
+        }
+        self.cue?.tip += axis * allowed
+        return allowed
     }
 
     /// Where the cue and a ball meet, if they do: the direction out of the cue, how deep the ball is

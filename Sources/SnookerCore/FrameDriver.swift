@@ -1301,11 +1301,15 @@ public final class FrameDriver {
     /// down on the shot.
     public var strokeWasPlayedFrom: Vec2 { strokeCueStart }
 
-    /// Moves the cue the way the mouse does while the balls run: `millimetres` along the stick's own
-    /// axis, carrying the stick with it and telling the physics how fast it is going. The cue is the
-    /// player's hand, so **the mouse owns its position**: the simulation never carries it along, and a
-    /// stick the player has stopped moving stays where it is. What it has is a speed, which is what a
-    /// ball it runs into is answered with, and any ball it does run into is a foul (Rule 11(b)(vi)).
+    /// Hands the cue the travel the mouse has given it while the balls run: `millimetres` along the stick's
+    /// own axis, at the speed that travel over `dt` is worth. The cue is the player's hand, so the **mouse
+    /// owns the travel** — a stick the player has stopped moving is not carried at all — and the
+    /// **simulation makes it**, a physics step at a time and along with the balls
+    /// (`PhysicsWorld.theCueIsToBeCarriedBy`), so that the tip goes with them rather than jumping a frame's
+    /// worth at once. That is what a stick does, and it is what decides whether one can run a ball down: a cue
+    /// at a steady speed cannot catch a ball running away from it, and it can still catch a ball that an
+    /// object ball has stopped. Either way a ball the stick meets is a foul (Rule 11(b)(vi)), and the cue
+    /// ball struck a second time is the double hit of Rule 11(a)(ii).
     public func carryTheCue(forwardByMillimetres millimetres: Double, over dt: TimeInterval) {
         carryCue(forwardByMillimetres: millimetres, over: dt)
     }
@@ -1317,8 +1321,12 @@ public final class FrameDriver {
     private func carryTheChargedFollowThrough(over dt: Double) {
         guard var stroke = theChargedStroke, stroke.phase == .followingThrough,
               world.cue != nil else { return }
-        // Stepped finely, as the push is: a stroke's length is not a thing the frame rate may change.
+        // The speed comes off the stroke's own profile — a place and a time, stepped finely because a stroke's
+        // length is not a thing the frame rate may change — and the **frame's whole travel** is what is handed
+        // on, once: the simulation walks it out with the balls, a step at a time. See
+        // `PhysicsWorld.theCueIsToBeCarriedBy`.
         var left = max(0, dt)
+        var travel = 0.0
         while left > 1e-9, theChargedStroke?.phase == .followingThrough {
             let step = min(left, 0.002)
             left -= step
@@ -1327,9 +1335,11 @@ public final class FrameDriver {
                 theChargedStroke?.phase = .standing
                 return
             }
-            theChargedStroke = stroke
-            carryCue(forwardByMillimetres: speed * step, over: step)
+            travel += speed * step
         }
+        theChargedStroke = stroke
+        guard travel > 0 else { return }
+        carryCue(forwardByMillimetres: travel, over: max(dt, 1e-9))
     }
 
     /// How far past the middle of the ball it struck the tip has got, in millimetres — the measure the
@@ -1395,40 +1405,32 @@ public final class FrameDriver {
         if wanted > 0 {
             wanted = min(wanted, roomToFollowThrough)
         }
-        var allowed = asFarAsTheTableAllows(wanted)
-        // **And the tip may not be carried through the ball it is playing at.** A stick cannot pass through
-        // a ball: it stops where it meets it, exactly as it stops at the cloth. Without this, a follow-through
-        // that is carried once a frame can land the crown *inside* the ball — a full-power charged shot moves
-        // the tip 28 mm in a frame, and with the tip off the middle of the ball (any spin at all) its crown
-        // stands much nearer the ball's own axis, which is close enough for that one step to overtake it. The
-        // ball the cue **returns** to is another thing entirely and is not this: a stick standing on the table
-        // is a thing a ball runs into, and that is a foul the game calls.
-        if allowed > 0 { allowed = min(allowed, asFarAsTheCueBallAllows(allowed)) }
+        let allowed = asFarAsTheTableAllows(wanted)
+        // And the travel is the **simulation's** to make, a step at a time and along with the balls: the tip
+        // goes with them rather than jumping a frame's worth at once, which is what a stick does and what
+        // decides whether it can run a ball down. Nothing is moved here; what the steps made of it is read
+        // back when they are done — see `thatTheCueWasCarried`. See `PhysicsWorld.theCueIsToBeCarriedBy`.
+        world.theCueIsDrivenAt = dt > 0
+            ? max(-FrameDriver.maxCueSpeed, min(FrameDriver.maxCueSpeed, allowed / dt))
+            : 0
+        world.theCueIsToBeCarriedBy = allowed
+        world.theCueWasCarriedBy = 0
         let speed = dt > 0
             ? max(-FrameDriver.maxCueSpeed, min(FrameDriver.maxCueSpeed, allowed / dt))
             : 0
         cueTravelSpeed = speed
         if var cue = world.cue {
-            cue.tip += cue.axis * allowed
             cue.speed = speed
             world.cue = cue
         }
     }
 
-    /// As much of `millimetres` of travel along the cue's own axis as there is before the tip comes up
-    /// against the **ball it struck**: found by halving the difference, the way the cloth is.
-    private func asFarAsTheCueBallAllows(_ millimetres: Double) -> Double {
-        guard millimetres > 0, let cue = world.cue else { return millimetres }
-        func clear(_ travel: Double) -> Bool {
-            !world.theCueTipWouldTouch(BallID.cue, at: cue.tip + cue.axis * travel, along: cue.axis)
-        }
-        if clear(millimetres) { return millimetres }
-        var low = 0.0, high = millimetres
-        for _ in 0..<10 {
-            let middle = (low + high) / 2
-            if clear(middle) { low = middle } else { high = middle }
-        }
-        return low
+    /// What the frame's own steps made of the travel the stroke asked for: the speed the stick was really
+    /// carried at, which is what the readout shows. Read after the balls have been stepped — see
+    /// `PhysicsWorld.theCueWasCarriedBy`.
+    private func thatTheCueWasCarried(over dt: Double) {
+        guard dt > 0 else { return }
+        cueTravelSpeed = world.theCueWasCarriedBy / dt
     }
 
     /// As much of `millimetres` of travel along the cue's own axis as the table allows before the tip
@@ -1502,6 +1504,7 @@ public final class FrameDriver {
             simulationClock += h
             if simulationClock > 25 || world.allAtRest { break }
         }
+        thatTheCueWasCarried(over: min(dt, 0.1))
         if world.allAtRest || simulationClock > 25 {
             world.stopAll()
             finishStroke()
