@@ -2819,7 +2819,8 @@ enum Snapshots {
         }
         print(String(format: "  and following through on a level cue: the tip is carried %.0f mm past where the shot was played, of a maximum of %.0f%@",
                      followThroughSample, FrameDriver.maxFollowThrough,
-                     (followThroughSample > 200 && followThroughSample < FrameDriver.maxFollowThrough + 20
+                     (followThroughSample > FrameDriver.maxFollowThrough - 20
+                      && followThroughSample < FrameDriver.maxFollowThrough + 20
                       ? " — the cue follows the ball through, and stops where the follow-through runs out"
                       : " — WRONG: the cue does not follow through, or runs past its maximum") as NSString))
         if let ball = follow.cueBall {

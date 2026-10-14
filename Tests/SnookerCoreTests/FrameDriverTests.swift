@@ -1440,7 +1440,7 @@ final class FrameDriverTests: XCTestCase {
     /// The stick is the player's hand, but it is still a stick: driven on into the table it stops where
     /// the tip touches — the cloth under it, or the cushion it is driven at — rather than passing
     /// through it. A follow-through is short because a real cue's tip comes up against the cloth, and
-    /// that is inside the 250 mm the hand allows once the cue is stood up.
+    /// that is inside the 200 mm the hand allows once the cue is stood up.
     func testTheCueStopsWhenTheTipComesUpAgainstTheTable() {
         let d = cueActionSetupInTheOpen()
         // A cue stood up 30°: the tip has only a ball radius of cloth below it and comes down to meet it
@@ -1465,10 +1465,10 @@ final class FrameDriverTests: XCTestCase {
     }
 
     /// The cue's follow-through is the player's own hand, and it runs out at `maxFollowThrough`: pushed
-    /// on after the strike, the tip is carried the whole 250 mm from the middle of the ball and no
+    /// on after the strike, the tip is carried the whole 200 mm from the middle of the ball and no
     /// further. A level cue in the open never meets the cloth first, so the cap is what stops it.
-    func testTheFollowThroughStopsAtTwoHundredAndFiftyMillimetres() {
-        XCTAssertEqual(FrameDriver.maxFollowThrough, 250)
+    func testTheFollowThroughStopsAtTwoHundredMillimetres() {
+        XCTAssertEqual(FrameDriver.maxFollowThrough, 200)
         let d = cueActionSetupInTheOpen()
         d.shoot(angle: 0, power: 0.3, side: 0, vertical: 0)
         let before = d.cueOnTheTable?.tip ?? .zero
@@ -1509,7 +1509,10 @@ final class FrameDriverTests: XCTestCase {
             frames += 1
             guard let cue = d.cueOnTheTable else { break }
             let distance = Vec2(cue.tip.x, cue.tip.y).distance(to: from)
-            if distance > travelled + 0.001 {
+            // A frame counts as a frame of travel when the tip has moved by more than a crumb: the tip
+            // lands on the length to within a few thousandths of a millimetre, and the step or two that
+            // creep up on that are the arithmetic of arriving, not the stick being carried on.
+            if distance > travelled + 0.01 {
                 travelled = distance
                 movingFrames += 1
                 speeds.append(d.cueTravelSpeed)

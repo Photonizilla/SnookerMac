@@ -740,7 +740,7 @@ public final class FrameDriver {
 
     /// The furthest the cue is **followed through**, in millimetres: past the strike the tip may not
     /// be carried further than this from the middle of the ball it struck. It is the mirror of
-    /// `maxCueDraw` — 400 mm back, 250 through — and, like the pull-back, it caps the player's own
+    /// `maxCueDraw` — 400 mm back, 200 through — and, like the pull-back, it caps the player's own
     /// hand rather than setting anything: a player who stops the cue short has a shorter
     /// follow-through, and the **cloth** stops it sooner still when the cue is stood up, which is what
     /// `asFarAsTheTableAllows` sees to. Without the cap the stick would run on up the table for as
@@ -748,7 +748,7 @@ public final class FrameDriver {
     ///
     /// It is also the far end of the follow-through a **charged** shot is given by the game itself: see
     /// `chargedFollowThroughLength(of:)`, which runs from `leastChargedFollowThrough` up to this.
-    public static let maxFollowThrough: Double = 250
+    public static let maxFollowThrough: Double = 200
 
     /// How far the cue has to come back before a push through counts as a stroke. Without it a
     /// twitch of the mouse while the aim is being lined up would play the shot. It sets nothing
@@ -779,7 +779,7 @@ public final class FrameDriver {
     /// ball it struck — the same measure `maxFollowThrough` uses.
     ///
     /// **Linear in the strength of the shot**: the gentlest the meter will set is
-    /// `leastChargedFollowThrough` (50 mm) and full power is `maxFollowThrough` (250 mm), with everything
+    /// `leastChargedFollowThrough` (50 mm) and full power is `maxFollowThrough` (200 mm), with everything
     /// between them in proportion. A shot played by hand has no length of its own: its follow-through is
     /// the player's, and `maxFollowThrough` is only the cap on it.
     public static func chargedFollowThroughLength(of strength: Double) -> Double {
