@@ -3773,15 +3773,15 @@ final class Table3D {
         let up = driver.spinVertical * Table.ballRadius          // follow positive
         let lift = PhysicsWorld.cueLean(at: driver.cueElevation)
 
-        // The cue is drawn back while the power builds: a cue action moves it by hand, so it stands where
-        // the player has drawn it; a timed charge pulls it back by how far the power has built. The
-        // **follow-through** is not drawn from here. Once the shot is away the stick is the physics' own
-        // and is drawn where the mouse has carried it (the simulation above returns), capped at
-        // `FrameDriver.maxFollowThrough` — see `FrameDriver.carryTheCue`.
+        // The cue stands where the hand — the player's or the game's own — has drawn it, and nowhere else:
+        // while a charge is in hand the meter fills and the cue **does not move** (it stands at its rest
+        // place off the ball, which is where the stroke will be played from), and once the button is let go
+        // the charged shot's own cue action draws it back and brings it through. The **follow-through** is
+        // not drawn from here: once the shot is away the stick is the physics' own and is drawn where it
+        // has been carried (the simulation above returns), capped at `FrameDriver.maxFollowThrough` — see
+        // `FrameDriver.carryTheCue`.
         var gap = Table.cueTipGap
-        if driver.mode == .charging {
-            gap = Table.cueTipGap + (driver.isMovingTheCue ? driver.cueDraw : driver.power * FrameDriver.maxCueDraw)
-        }
+        if driver.mode == .charging, driver.isMovingTheCue { gap = Table.cueTipGap + driver.cueDraw }
 
         // The cue stays where the stroke was played while the balls run — the player does not walk
         // after them, and standing up does not lay the stick at the ball either: it is left on the

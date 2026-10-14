@@ -902,16 +902,9 @@ final class FrameDriverTests: XCTestCase {
     }
 
     func testTheSpinIsResetAfterAChargedShotAsWell() {
-        let d = cueActionSetupInTheOpen()
-        d.spinSide = 0.5
-        d.spinVertical = 0.25
-        d.beginCharge(at: 0)
-        d.updateCharge(at: 1.0)
-        d.releaseShot()
-        d.runStrokeToRest()
-
-        XCTAssertEqual(d.spinSide, 0, accuracy: 0.001, "a mouse-button charge is a shot like any other")
-        XCTAssertEqual(d.spinVertical, 0, accuracy: 0.001)
+        let shot = playAChargedShot(at: 0.5, spin: (side: 0.5, vertical: 0.25))
+        XCTAssertEqual(shot.driver.spinSide, 0, accuracy: 0.001, "a charge is a shot like any other")
+        XCTAssertEqual(shot.driver.spinVertical, 0, accuracy: 0.001)
     }
 
     /// The spin control is the player's: it puts the tip where they ask, all the way to the edge of the
@@ -1487,70 +1480,136 @@ final class FrameDriverTests: XCTestCase {
                       "and it is nowhere it may not stand")
     }
 
-    /// Charges a shot to `power`, lets it go, and runs the stroke with **no hand on the cue** — the
-    /// mouse is never moved — reporting how far the tip was carried from the middle of the ball it
-    /// struck, how fast it was going as it went, and over how many frames.
-    private func chargedShotFollowThrough(power: Double)
-        -> (travelled: Double, speeds: [Double], movingFrames: Int) {
+    /// What a **charged** shot did, played the way the window plays it: the meter ticked while the button
+    /// is held, the button let go, and the frames then run — the charge's own tick and the simulation both.
+    private struct AChargedShot {
+        var driver: FrameDriver
+        /// The tip's distance from the middle of the ball it struck when the follow-through stopped, in mm.
+        var followedThroughTo = 0.0
+        /// How far back the cue was drawn, in mm.
+        var drawnBackTo = 0.0
+        /// The cue's own speed at the moment it met the ball, and what the stroke sent the ball away with.
+        var cueSpeedAtTheBall = 0.0
+        var ballSpeedAtTheStrike = 0.0
+        var tipOffsetAtTheStrike = 0.0
+        /// The seconds the backswing took, and the seconds the cue then stood at the top of it.
+        var backswing = 0.0
+        var pause = 0.0
+        /// Whether the charge itself moved the cue. It does not.
+        var theChargeMovedNothing = true
+        /// The tip's progress through the follow-through with the speed the cue was going at there: the
+        /// stroke's own profile, read off as it is played.
+        var followThrough: [(progress: Double, speed: Double)] = []
+    }
+
+    private func playAChargedShot(at power: Double, spin: (side: Double, vertical: Double) = (0, 0),
+                                  fps: Double = 120) -> AChargedShot {
         let d = cueActionSetupInTheOpen()
+        if spin.side != 0 || spin.vertical != 0 { d.setSpin(side: spin.side, vertical: spin.vertical) }
+        d.aimAngle = 0
         d.beginCharge(at: 0)
-        // The meter fills from `minimumChargePower` over 1.1 s, so this is the time that leaves it at
-        // the power asked for.
-        d.updateCharge(at: (power - FrameDriver.minimumChargePower) * 1.1)
-        XCTAssertEqual(d.power, power, accuracy: 0.001, "the charge is where the probe asked for")
+        var time = 0.0
+        var theChargeMovedNothing = true
+        while time < (power - FrameDriver.minimumChargePower) * 1.1 {
+            time += 1.0 / fps
+            d.updateCharge(at: time)
+            if d.cueDraw != 0 { theChargeMovedNothing = false }
+        }
+        // The last tick lands the meter exactly where the test asked for, rather than a frame past it.
+        time = (power - FrameDriver.minimumChargePower) * 1.1
+        d.updateCharge(at: time)
+        XCTAssertEqual(d.power, power, accuracy: 0.002, "the charge is where the test asked for it")
+        let letGo = time
         d.releaseShot()
-        let from = d.strokeWasPlayedFrom
-        // The tip's progress **along the shot**, not its distance from the ball's middle: the tip is held
-        // behind the ball at the strike and passes the ball's place as the follow-through starts, so the
-        // distance dips through that crossing and the progress does not.
-        let along = Vec2(cos(d.aimAngle), sin(d.aimAngle))
-        var travelled = 0.0
-        var speeds: [Double] = []
-        var movingFrames = 0
+
+        var shot = AChargedShot(driver: d)
+        shot.theChargeMovedNothing = theChargeMovedNothing
+        var made: [FrameDriver.Impact] = []
+        var phase = d.theChargedStrokePhase
+        var thePhaseBegan = letGo
+        var struck = false
         var frames = 0
-        while d.mode == .simulating, frames < 60 * 30 {
-            d.update(dt: 1.0 / 120.0)
+        while frames < 60 * 60, !(struck && d.mode != .simulating) {
+            time += 1.0 / fps
+            d.updateCharge(at: time)
+            if d.mode == .simulating { _ = d.update(dt: 1.0 / fps) }
+            made += d.takeImpacts()
             frames += 1
-            guard let cue = d.cueOnTheTable else { break }
-            let distance = (Vec2(cue.tip.x, cue.tip.y) - from).dot(along)
-            // A frame counts as a frame of travel when the tip has moved by more than a crumb: the tip
-            // lands on the length to within a few thousandths of a millimetre, and the step or two that
-            // creep up on that are the arithmetic of arriving, not the stick being carried on.
-            if distance > travelled + 0.01 {
-                travelled = distance
-                movingFrames += 1
-                speeds.append(d.cueTravelSpeed)
+            let now = d.theChargedStrokePhase
+            if now != phase {
+                if now == "waiting" {
+                    shot.drawnBackTo = d.cueDraw
+                    shot.backswing = time - thePhaseBegan
+                }
+                if now == "pushing" { shot.pause = time - thePhaseBegan }
+                if now == "following through" {
+                    struck = true
+                    shot.cueSpeedAtTheBall = d.lastStrikeCueSpeed
+                    shot.tipOffsetAtTheStrike = d.tipOffset
+                }
+                thePhaseBegan = time
+                phase = now
+            }
+            if struck, let cue = d.cueOnTheTable {
+                let along = Vec2(cos(d.aimAngle), sin(d.aimAngle))
+                let progress = (Vec2(cue.tip.x, cue.tip.y) - d.strokeWasPlayedFrom).dot(along)
+                shot.followedThroughTo = max(shot.followedThroughTo, progress)
+                shot.followThrough.append((progress, d.cueTravelSpeed))
             }
         }
-        return (travelled, speeds, movingFrames)
+        shot.ballSpeedAtTheStrike = made.first { $0.kind == .strike }?.speed ?? 0
+        shot.driver = d
+        return shot
     }
 
-    /// A **charged** shot is carried through by the game itself — the hand is on the button and not on the
-    /// cue — and at **one speed all the way**: the speed the stick struck the ball with, held constant for
-    /// the whole of the follow-through. Nothing of the hand is in it.
-    func testAChargedShotIsCarriedThroughAtTheSpeedItStruckWith() {
-        let full = chargedShotFollowThrough(power: 1)
-        let strikeSpeed = FrameDriver.maxPower / (1 + FrameDriver.cueTipRestitution)
-        XCTAssertEqual(full.travelled, FrameDriver.maxFollowThrough, accuracy: 2,
-                       "a full charge is carried the whole follow-through, measured from the ball's middle")
-        XCTAssertGreaterThan(full.speeds.count, 2, "and the stick was carried on")
-        // Every step of the travel is at the speed the stick struck with. What is slower is the landing:
-        // the short step that puts the tip exactly on the length, and the crumb of arithmetic after it
-        // that closes the last thousandth of a millimetre.
-        for speed in full.speeds.dropLast(2) {
-            XCTAssertEqual(speed, strikeSpeed, accuracy: strikeSpeed * 0.02,
-                           "at the speed it struck with, the same speed all the way")
+    /// A **charged** shot is a stroke the game plays for the player, and it is a stroke: the cue is drawn
+    /// back to **twice** the follow-through over half a second, stands at the top of the backswing for half
+    /// a second, comes through and strikes the ball at the speed the shot was charged to, and follows
+    /// through the length the shot is worth. The charge itself moves nothing: the meter fills and the cue
+    /// stands where it is.
+    func testAChargedShotIsAStrokeTheGamePlays() {
+        let shot = playAChargedShot(at: 1)
+        XCTAssertTrue(shot.theChargeMovedNothing, "the charge does not move the cue")
+        let length = FrameDriver.chargedFollowThroughLength(of: 1)
+        XCTAssertEqual(shot.drawnBackTo, 2 * length, accuracy: 1,
+                       "the cue is drawn back twice the follow-through")
+        XCTAssertEqual(shot.backswing, FrameDriver.chargedPullBackSeconds, accuracy: 2.0 / 120,
+                       "and it is half a second getting there")
+        XCTAssertEqual(shot.pause, FrameDriver.chargedPauseSeconds, accuracy: 2.0 / 120,
+                       "before standing at the top of the backswing for half a second")
+        XCTAssertEqual(shot.cueSpeedAtTheBall, FrameDriver.maxCueSpeed,
+                       accuracy: FrameDriver.maxCueSpeed * 0.01,
+                       "the cue comes through the ball at the speed the shot was charged to")
+        XCTAssertEqual(shot.followedThroughTo, length, accuracy: 2,
+                       "and follows through the length the shot is worth")
+        XCTAssertEqual(FrameDriver.ballSpeed(fromCueSpeed: shot.cueSpeedAtTheBall,
+                                             tipOffset: shot.tipOffsetAtTheStrike),
+                       shot.ballSpeedAtTheStrike, accuracy: 2,
+                       "and the ball's speed is what the strike makes of it and the contact point")
+    }
+
+    /// **A charge sets the cue's own speed**, and everything the cue ball does comes out of that and the
+    /// point on the ball the tip is striking: a centre hit sends it away at `1 + e` times the cue's speed,
+    /// and the further off centre the tip is, the more of the same impulse goes on spin and the less is
+    /// left for travel. Nothing sets the ball's speed alongside the cue's.
+    func testAChargedShotSetsTheCuesSpeedAndTheStrikeDecidesTheBall() {
+        for (side, vertical) in [(0.0, 0.0), (0.5, -0.2), (0.0, -0.5), (0.9, 0.0)] {
+            let power = 0.6
+            let shot = playAChargedShot(at: power, spin: (side, vertical))
+            let cueSpeed = FrameDriver.maxCueSpeed * power
+            XCTAssertEqual(shot.cueSpeedAtTheBall, cueSpeed, accuracy: cueSpeed * 0.01,
+                           "the cue comes through the ball at the speed the shot was charged to")
+            XCTAssertEqual(shot.ballSpeedAtTheStrike,
+                           FrameDriver.ballSpeed(fromCueSpeed: cueSpeed,
+                                                 tipOffset: shot.tipOffsetAtTheStrike),
+                           accuracy: max(1, cueSpeed * 0.01),
+                           "and the ball's speed is what the strike makes of that speed at that point")
         }
-        XCTAssertLessThanOrEqual(full.speeds.last ?? 0, strikeSpeed, "and never faster than the strike")
-        // The travel takes the length over that speed, give or take the strike's own hold — which carries
-        // the tip with the ball for a fraction of the first frame — and the short step at the end.
-        XCTAssertEqual(Double(full.movingFrames), full.travelled / strikeSpeed * 120, accuracy: 3,
-                       "and the travel takes the length over that speed, neither hurrying nor dawdling")
     }
 
-    /// The length of that follow-through is **linear in the strength** of the shot: the gentlest a charge
+    /// The length of the follow-through is **linear in the strength** of the shot: the gentlest a charge
     /// will go is `leastChargedFollowThrough` and full power is the whole of `maxFollowThrough`, with the
-    /// shots between them in proportion.
+    /// shots between them in proportion — and the pull-back is twice whatever it is.
     func testAChargedShotsFollowThroughIsLinearInItsStrength() {
         XCTAssertEqual(FrameDriver.chargedFollowThroughLength(of: FrameDriver.minimumChargePower),
                        FrameDriver.leastChargedFollowThrough, accuracy: 0.001,
@@ -1562,90 +1621,42 @@ final class FrameDriverTests: XCTestCase {
                        (FrameDriver.leastChargedFollowThrough + FrameDriver.maxFollowThrough) / 2,
                        accuracy: 0.001, "half way up the strength is half way along the length")
 
-        let gentle = chargedShotFollowThrough(power: FrameDriver.minimumChargePower)
-        let half = chargedShotFollowThrough(power: 0.5)
-        let full = chargedShotFollowThrough(power: 1)
-        XCTAssertEqual(gentle.travelled, FrameDriver.leastChargedFollowThrough, accuracy: 2,
+        let gentle = playAChargedShot(at: FrameDriver.minimumChargePower)
+        let half = playAChargedShot(at: 0.5)
+        let full = playAChargedShot(at: 1)
+        XCTAssertEqual(gentle.followedThroughTo, FrameDriver.leastChargedFollowThrough, accuracy: 2,
                        "and the gentlest charge is carried the shortest distance of all")
-        XCTAssertEqual(half.travelled, FrameDriver.chargedFollowThroughLength(of: 0.5), accuracy: 2,
+        XCTAssertEqual(half.followedThroughTo, FrameDriver.chargedFollowThroughLength(of: 0.5), accuracy: 2,
                        "a half-charged shot is carried half way along")
-        XCTAssertEqual(full.travelled, FrameDriver.maxFollowThrough, accuracy: 2)
+        XCTAssertEqual(full.followedThroughTo, FrameDriver.maxFollowThrough, accuracy: 2)
+        for (power, shot) in zip([FrameDriver.minimumChargePower, 0.5, 1.0], [gentle, half, full]) {
+            XCTAssertEqual(shot.drawnBackTo, 2 * FrameDriver.chargedFollowThroughLength(of: power),
+                           accuracy: 1.5,
+                           "and the pull-back is twice the follow-through, at every strength")
+        }
     }
 
-    /// A charged shot's follow-through is carried on from the moment the cue ball leaves the cue, with
-    /// nothing between the strike and the stick's going on after it: the **beat** is off
-    /// (`chargedFollowThroughHoldFrames` is none of them). The shot is played at the strike, the leather
-    /// has the ball for the few milliseconds of the contact, and what the stick does after that is held by
-    /// the game rather than by the hand.
-    func testAChargedShotsFollowThroughGoesOnWhenTheBallLeavesTheCue() {
-        XCTAssertEqual(FrameDriver.chargedFollowThroughHoldFrames, 0, "the beat is off")
-        let d = cueActionSetupInTheOpen()
-        d.beginCharge(at: 0)
-        d.updateCharge(at: (1 - FrameDriver.minimumChargePower) * 1.1)
-        d.releaseShot()
-        XCTAssertTrue(d.world.theCueIsOn(BallID.cue),
-                      "the strike is the leather's own hold on the ball, and it begins with the tip on it")
-
-        let along = Vec2(cos(d.aimAngle), sin(d.aimAngle))
-        var stillAfterTheBallLeft = 0
-        var theBallHasLeft = false
-        var progress = 0.0
-        var carried = 0.0
-        var frames = 0
-        while d.mode == .simulating, frames < 120 {
-            // The ball is the cue's own while the leather has it; the carry of the follow-through is what
-            // the frames after that are.
-            let onTheCue = d.world.theCueIsOn(BallID.cue)
-            _ = d.update(dt: 1.0 / 120.0)
-            frames += 1
-            guard let tip = d.cueOnTheTable?.tip else { break }
-            let now = (Vec2(tip.x, tip.y) - d.strokeWasPlayedFrom).dot(along)
-            if !onTheCue {
-                // Only the frames the follow-through is still to be carried in are counted: once the tip
-                // is on the length it has nothing left to do and stands there for the rest of the stroke.
-                if theBallHasLeft, now <= progress + 1e-9 { stillAfterTheBallLeft += 1 }
-                theBallHasLeft = true
-                if now >= FrameDriver.maxFollowThrough - 0.5 {
-                    carried = max(carried, now)
-                    break
-                }
-            }
-            progress = now
-            carried = max(carried, now)
+    /// And the follow-through **brakes**: the cue is carried on at the shot's own speed for the first two
+    /// thirds of the length, and comes to a stop over the last third of it, so the tip arrives on the length
+    /// and stands there. That is what the deceleration is for, and it is what stops the cue running on.
+    func testAChargedShotsFollowThroughBrakesToItsLength() {
+        let shot = playAChargedShot(at: 1)
+        let length = FrameDriver.chargedFollowThroughLength(of: 1)
+        let upToSpeedOver = length * FrameDriver.chargedCueIsUpToSpeedBy
+        let travelling = shot.followThrough.filter { $0.progress <= upToSpeedOver - 1 }
+        let braking = shot.followThrough.filter { $0.progress >= upToSpeedOver + 1 }
+        XCTAssertGreaterThan(travelling.count, 2, "the cue is carried on through the first two thirds")
+        XCTAssertGreaterThan(braking.count, 2, "and braked over the last third of the length")
+        for sample in travelling {
+            XCTAssertEqual(sample.speed, shot.cueSpeedAtTheBall,
+                           accuracy: shot.cueSpeedAtTheBall * 0.02,
+                           "at the shot's own speed, all the way to the two thirds")
         }
-        XCTAssertTrue(theBallHasLeft, "the ball left the cue")
-        XCTAssertEqual(stillAfterTheBallLeft, 0,
-                       "and the stick was going on already in the frame the ball left it")
-        XCTAssertEqual(carried, FrameDriver.maxFollowThrough, accuracy: 2,
-                       "carried the whole follow-through, with nothing standing between the two")
-    }
-
-    /// **A charge sets the cue's own speed**, and everything the cue ball does comes out of that and the
-    /// point on the ball the tip is striking: a centre hit sends it away at `1 + e` times the cue's speed,
-    /// and the further off centre the tip is, the more of the same impulse goes on spin and the less is
-    /// left for travel. Nothing sets the ball's speed alongside the cue's.
-    func testAChargedShotSetsTheCuesSpeedAndTheStrikeDecidesTheBall() {
-        for (side, vertical) in [(0.0, 0.0), (0.5, -0.2), (0.0, -0.5), (0.9, 0.0)] {
-            let d = cueActionSetupInTheOpen()
-            d.setSpin(side: side, vertical: vertical)
-            let power = 0.6
-            d.beginCharge(at: 0)
-            d.updateCharge(at: (power - FrameDriver.minimumChargePower) * 1.1)
-            XCTAssertEqual(d.power, power, accuracy: 0.001)
-            d.releaseShot()
-
-            // The stick is at its own speed at the moment it touched the ball — the meter's fraction of the
-            // fastest a cue may be travelling — and the ball's speed is that speed put through the strike.
-            let cueSpeed = FrameDriver.maxCueSpeed * power
-            XCTAssertEqual(d.cueTravelSpeed, cueSpeed, accuracy: cueSpeed * 0.001,
-                           "the meter sets the cue's speed, and the cue does not change speed on the ball")
-            // The strike sends the ball away **along the cue's own line** at the speed the model gives for
-            // that cue speed and that point on the ball; what the ball's velocity *along the cloth* is of
-            // that depends on the angle the cue stands at, since a lifted cue drives the ball down into it.
-            let alongTheCue = FrameDriver.ballSpeed(fromCueSpeed: cueSpeed, tipOffset: d.tipOffset)
-            XCTAssertEqual(d.cueBall?.velocity.length ?? 0, alongTheCue * cos(d.cueElevation), accuracy: 1,
-                           "and the ball's speed is what the strike makes of that speed at that point")
+        for (earlier, later) in zip(braking, braking.dropFirst()) {
+            XCTAssertLessThanOrEqual(later.speed, earlier.speed + 1, "and slowing from there")
         }
+        XCTAssertLessThan(braking.last?.speed ?? 1, shot.cueSpeedAtTheBall * 0.2,
+                          "to a stop, on the length")
     }
 
     /// The frame reports every contact as it happens — what kind, where on the table, and how hard —

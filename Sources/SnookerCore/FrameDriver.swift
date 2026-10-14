@@ -688,16 +688,30 @@ public final class FrameDriver {
         endCueAction()
         mode = .charging
         chargeStart = time
+        lastChargeTick = nil
+        theCueActionIsTheGames = false
+        theChargedStroke = nil
         power = min(FrameDriver.minimumChargePower, maximumChargePower)
         isDownOnTheShot = true
     }
 
     public func updateCharge(at time: TimeInterval) {
+        // The frame's own tick while a charge is in hand, and while the cue action the charge plays is
+        // running: the meter is the clock's, and the script's is the frame's own.
+        let dt = lastChargeTick.map { max(0, time - $0) } ?? 0
+        lastChargeTick = time
+        if theChargedStroke != nil {
+            driveTheChargedStroke(over: dt)
+            return
+        }
         guard mode == .charging, let start = chargeStart else { return }
         // A charge is drawn back in proportion to its power, so the room behind the ball caps what the
         // cue can be charged to: a shot with the cue ball up against a cushion is a soft one.
         power = min(maximumChargePower, FrameDriver.minimumChargePower + (time - start) / 1.1)
     }
+
+    /// When the charge was last ticked, so `updateCharge(at:)` can read the frame's own time out of it.
+    private var lastChargeTick: TimeInterval?
 
     /// The most of a full charge the room behind the ball allows. The timed charge draws the cue back
     /// by `power · maxCueDraw` (the 3D view draws it at exactly that), so this is the power whose
@@ -718,13 +732,124 @@ public final class FrameDriver {
             cancelCharge()
             return
         }
-        // A charge is a shot with **the hand on the button and not on the cue**, so its follow-through is
-        // the shot's own rather than the mouse's: see `chargedFollowThroughLength(of:)`.
-        beginStroke(followThrough: .charged)
+        // The shot is the **hand's** from here, played by the game: the cue is taken up the way `S` takes
+        // it up, and the script drives it — back, a pause, through the ball at the speed the charge was
+        // let go at, and out the other side. The ball is not struck until the cue's own run brings the
+        // tip into it. See `ChargedStroke`.
+        startTheChargedStroke()
+    }
+
+    /// Hands the stick to the game's own cue action, at the power the meter was let go at.
+    ///
+    /// The setting-up is `beginCueAction`'s: a cue action and a charge are two ways of playing the same
+    /// stroke and the beat of the script is where the one becomes the other. What the meter leaves behind
+    /// is the **speed** the cue is brought up to, and the **length** the shot follows through — every
+    /// other figure comes off those two, see `ChargedStroke`.
+    private func startTheChargedStroke() {
+        let followThrough = FrameDriver.chargedFollowThroughLength(of: power)
+        let pullBack = min(maximumCueDraw,
+                           followThrough * FrameDriver.chargedPullBackOverFollowThrough)
+        mode = .charging
+        chargeStart = nil
+        cueDraw = 0
+        peakCueDraw = 0
+        cueSpeed = 0
+        pushSpeedAverage = 0
+        lastMoveWasABackswing = false
+        isMovingTheCue = true
+        theCueActionIsTheGames = true
+        isDownOnTheShot = true
+        theChargedStroke = ChargedStroke(phase: .pullingBack, clock: 0, tipIsAt: 0,
+                                        followThrough: followThrough, pullBack: pullBack,
+                                        speed: FrameDriver.maxCueSpeed * power)
+    }
+
+    /// A frame of the game's own cue action: the backswing, the pause at the top of it, and the run
+    /// through the ball. The follow-through is `carryTheChargedFollowThrough`'s, in `update(dt:)`.
+    private func driveTheChargedStroke(over dt: Double) {
+        guard var stroke = theChargedStroke, dt > 0 else { return }
+        switch stroke.phase {
+        case .pullingBack:
+            stroke.clock += dt
+            let share = min(1, stroke.clock / FrameDriver.chargedPullBackSeconds)
+            // Eased out of the ball and into the pause: the cue is a hand's, and a hand does not snatch it
+            // back. The script's own easing curve, here and in the two places it is used again.
+            let wanted = stroke.pullBack * (1 - cos(Double.pi * share)) / 2
+            // Drawing back is a *negative* travel along the stick's own line — see `moveCue` — and the
+            // distance the script keeps is the distance behind the ball, which is what `cueDraw` is.
+            let travel = stroke.tipIsAt - wanted
+            stroke.tipIsAt = wanted
+            if share >= 1 {
+                stroke.phase = .waiting
+                stroke.clock = 0
+            }
+            theChargedStroke = stroke
+            moveCue(forwardByMillimetres: travel, over: dt)
+        case .waiting:
+            stroke.clock += dt
+            if stroke.clock >= FrameDriver.chargedPauseSeconds {
+                stroke.phase = .pushing
+                stroke.clock = 0
+            }
+            theChargedStroke = stroke
+            // Standing at the top of the backswing: a frame of nothing keeps the cue's speed at nothing.
+            moveCue(forwardByMillimetres: 0, over: dt)
+        case .pushing:
+            var left = dt
+            while left > 1e-9, theChargedStroke?.phase == .pushing {
+                // The script's kinematics are stepped finely enough to be trusted: the cue's speed is a
+                // function of how long it has been coming, and the frame is one value of it.
+                let step = min(left, 0.002)
+                left -= step
+                stroke.clock += step
+                let speed = chargedCueSpeed(of: stroke)
+                var travel = speed * step
+                if travel >= stroke.tipIsAt {
+                    // The tip has come into the ball. `moveCue` plays the stroke — the ball's speed and
+                    // spin come out of the cue's own speed and the tip's own contact point, as they do for
+                    // a hand's stroke — and whatever is left of the frame's travel is the strike's own
+                    // business, not the script's.
+                    travel = stroke.tipIsAt
+                    stroke.tipIsAt = 0
+                    theChargedStroke = stroke
+                    // The last of the way is shorter than a step because the ball is where it is, not
+                    // because the cue slowed down: it is the *travel* `moveCue` is given that is short, so
+                    // the time it is given is the short travel over the speed the cue is going at. A cue
+                    // that arrives at the ball at the shot's own velocity is the whole point of the script.
+                    let time = min(step, travel / max(speed, 1))
+                    if moveCue(forwardByMillimetres: travel, over: time) {
+                        theChargedStroke?.phase = .followingThrough
+                        theChargedStroke?.clock = 0
+                    }
+                    return
+                }
+                stroke.tipIsAt -= travel
+                theChargedStroke = stroke
+                moveCue(forwardByMillimetres: travel, over: step)
+            }
+        case .followingThrough, .standing:
+            return
+        }
+    }
+
+    /// The speed the game's own cue is going at, `clock` seconds into the push: a **steady acceleration**
+    /// out of the top of the backswing, which brings the cue up to the shot's own speed exactly
+    /// `chargedCueIsUpToSpeedBy` of the way to the ball — so the last third of the way is at it — and holds
+    /// it there for the rest of the way.
+    ///
+    /// A steady acceleration and not a jump: the speed is the acceleration's own `a·t`, so the cue leaves
+    /// the top of the backswing the way a hand does, from nothing, and the velocity it arrives with is
+    /// exactly the one the shot was charged to.
+    private func chargedCueSpeed(of stroke: ChargedStroke) -> Double {
+        let upToSpeedOver = stroke.pullBack * FrameDriver.chargedCueIsUpToSpeedBy
+        let acceleration = stroke.speed * stroke.speed / (2 * upToSpeedOver)
+        return min(stroke.speed, acceleration * stroke.clock)
     }
 
     public func cancelCharge() {
         endCueAction()
+        theCueActionIsTheGames = false
+        theChargedStroke = nil
         guard mode == .charging else { return }
         chargeStart = nil
         power = 0.05
@@ -764,21 +889,35 @@ public final class FrameDriver {
     /// this is the least of it, at the gentlest the meter will go.
     public static let leastChargedFollowThrough: Double = 50
 
-    /// How long a **charged** shot's follow-through is held when the cue ball leaves the cue, in frames:
-    /// a **beat** between the strike and the stick going on after it.
+    // MARK: The charged shot's own cue action
+
+    /// The charge moves nothing: the meter fills while the cue stands at its rest place off the ball, and
+    /// the stroke begins when the button is let go.
     ///
-    /// The strike is played the moment the tip has the ball, and the tip then **has** the ball for the
-    /// contact itself (`PhysicsWorld.cueTipContactSeconds(forCueSpeed:)`) — the whole of that moment being
-    /// the stroke's one contact. A beat after it is what a player's own stroke does: the ball goes, and
-    /// the cue stands for an instant before the arm follows it through. It is measured in **frames**
-    /// because that is what the beat is, at whatever the table is running at.
+    /// What is played then is the **hand's** own cue action, run from a script: the stick is drawn back,
+    /// stands, comes through the ball and follows through exactly as a cue the mouse is moving does
+    /// (`moveCue`, `carryTheCue`), and the ball is answered by the cue's own velocity and the tip's own
+    /// contact point. Nothing about the shot is set from the meter but the **speed** the cue is brought up
+    /// to. These are the script's own figures.
+
+    /// How long the cue takes to draw back to its pull-back, in seconds, and how long it then stands there
+    /// before it comes through: a backswing that is a stroke and not a snatch, half a second back and half
+    /// a second at the top.
+    public static let chargedPullBackSeconds = 0.5
+    public static let chargedPauseSeconds = 0.5
+
+    /// How far back the cue is taken, as a multiple of the follow-through the shot is worth: **twice** it.
     ///
-    /// It is **off**, at none of them: the charged follow-through is carried on from the moment the ball
-    /// is off the cue, with nothing between the strike and the stick going on after it. The beat was tried
-    /// at two frames and at one, and it moved each of the double hits it was meant to answer by about its
-    /// own length and removed none of them, so it was not worth the look of it. The machinery is left
-    /// standing and this is the one number that turns it on.
-    public static let chargedFollowThroughHoldFrames = 0
+    /// A full charge draws the cue 400 mm back to follow 200 mm through, and the gentlest charge draws it
+    /// 100 mm back to follow 50 — so the pull-back is `maxCueDraw` at the top of the meter, and the room a
+    /// charge needs behind the ball is the room a full draw needs, which is what `maximumChargePower`
+    /// already allows for.
+    public static let chargedPullBackOverFollowThrough = 2.0
+
+    /// How much of the way to the ball the cue is brought up to its own speed over, as a fraction of the
+    /// pull-back: **two thirds**, so the last third of the way is at the shot's own velocity and the strike
+    /// is played by a cue that is going at the speed the shot was charged to.
+    public static let chargedCueIsUpToSpeedBy = 2.0 / 3.0
 
     /// How far the stick follows through on a **charged** shot, in millimetres, from the middle of the
     /// ball it struck — the same measure `maxFollowThrough` uses.
@@ -869,19 +1008,63 @@ public final class FrameDriver {
     /// stroke. See `carryTheCue`.
     private var theStickWasTravellingAt: Double = 0
 
-    /// Whether the stroke in play is a **charged** one, whose follow-through is the shot's own: see
-    /// `carryTheChargedFollowThrough`.
-    private var theStrokeIsCharged = false
+    /// The **pre-programmed cue action** a charged shot is played with, once the button is let go: the
+    /// game's own backswing, and then its own follow-through. Nil when no charged stroke is running.
+    private struct ChargedStroke {
+        enum Phase {
+            /// Drawing back to the pull-back, which takes `chargedPullBackSeconds`.
+            case pullingBack
+            /// Standing at the top of the backswing — the pause — for `chargedPauseSeconds`.
+            case waiting
+            /// Coming through: up to speed by `chargedCueIsUpToSpeedBy` of the way, then at that speed on
+            /// to the ball.
+            case pushing
+            /// The ball has gone: carried on to `followThrough`, at the strike's own speed for the first
+            /// two thirds of it and braking to a stop over the last third.
+            case followingThrough
+            /// The follow-through is done with, wherever the cue stopped.
+            case standing
+        }
+        var phase: Phase
+        /// What the running phase is measured in: how long the backswing, the pause, the push or the
+        /// braking has been going, read against that phase's own figure.
+        var clock: Double
+        /// Where the tip is, as a distance from the ball's own place: positive when the cue is drawn back
+        /// behind it, negative once the tip is through it.
+        var tipIsAt: Double
+        /// The follow-through the shot is worth, and the pull-back `chargedPullBackOverFollowThrough`
+        /// times it.
+        var followThrough: Double
+        var pullBack: Double
+        /// The speed the cue is brought up to: the shot's own velocity at the ball.
+        var speed: Double
+        /// When the follow-through's braking began, in seconds since the strike: nil while the cue is still
+        /// at the shot's own speed. See `chargedFollowThroughSpeed`.
+        var brakingBegan: Double?
+        /// What was left of the follow-through when the braking began: the distance the braking has to take
+        /// the tip over.
+        var brakingOver = 0.0
+    }
+    private var theChargedStroke: ChargedStroke?
 
-    /// The follow-through a charged shot is carried through: the **distance from the middle of the ball
-    /// it struck** the tip is to reach, and the speed it is carried at — the speed it struck with, held
-    /// **constant** for the whole of the travel. Nil for a stroke played by hand, whose follow-through is
-    /// the mouse's.
-    private var theChargedFollowThrough: (target: Double, speed: Double)?
-    /// Whether the cue ball has left the cue yet on a charged shot, and how many frames of the beat by
-    /// its leaving are still to run. See `carryTheChargedFollowThrough`.
-    private var theCueBallHasLeftTheCue = false
-    private var chargedHoldFramesLeft = 0
+    /// Whether the cue action in play is the **game's** rather than the mouse's: the pre-programmed action
+    /// of a charged shot. The game's own delivery is not a shaky hand, so it is worth exactly the speed it
+    /// is going at rather than a running average of one — see `moveCue` — and the mouse does not drive the
+    /// stick while it runs (`TableScene.applyCueTravel`), because the shot is not the player's to spoil.
+    public private(set) var theCueActionIsTheGames = false
+
+    /// Where the game's own cue action is up to, for the probes and the tests: which part of the script is
+    /// running. "none" when no charged stroke is in play.
+    public var theChargedStrokePhase: String {
+        switch theChargedStroke?.phase {
+        case .pullingBack: return "pulling back"
+        case .waiting: return "waiting"
+        case .pushing: return "pushing"
+        case .followingThrough: return "following through"
+        case .standing: return "standing"
+        case nil: return "none"
+        }
+    }
 
     /// How far off centre the tip strikes the ball, in ball radii: the other thing the shot's
     /// strength depends on, because that is the part of the impulse spent on spin.
@@ -928,7 +1111,11 @@ public final class FrameDriver {
         // delivery averages out, a steady one is worth exactly its own speed, and nothing about the
         // backswing comes into it, because the average starts again when the push does.
         let wanted = dt > 0 ? max(0, min(FrameDriver.maxCueSpeed, millimetres / dt)) : 0
-        if millimetres > 0, lastMoveWasABackswing {
+        if theCueActionIsTheGames {
+            // The game's own delivery is not a shaky hand: it is worth exactly the speed it is going at,
+            // and there is no jitter in it for an average to smooth out.
+            pushSpeedAverage = wanted
+        } else if millimetres > 0, lastMoveWasABackswing {
             pushSpeedAverage = wanted
         } else {
             let blend = dt > 0 ? min(1, dt / FrameDriver.cuePushAverageSeconds) : 1
@@ -950,7 +1137,8 @@ public final class FrameDriver {
         // as far as the room behind the ball allow, whichever is less.
         cueDraw = max(0, min(min(FrameDriver.maxCueDraw, maximumCueDraw), cueDraw))
         peakCueDraw = max(peakCueDraw, cueDraw)
-        power = cueActionStrength
+        // The meter is the player's: a cue the game is driving does not redraw it.
+        if !theCueActionIsTheGames { power = cueActionStrength }
         return false
     }
 
@@ -968,6 +1156,8 @@ public final class FrameDriver {
     public func cancelCueAction() {
         endCueAction()
         cancelCharge()
+        theCueActionIsTheGames = false
+        theChargedStroke = nil
         if mode != .simulating { isDownOnTheShot = false }
     }
 
@@ -1001,28 +1191,19 @@ public final class FrameDriver {
     /// Plays a stroke. `ballSpeed` is the speed the cue ball leaves at when the caller has worked it
     /// out (the cue action does, from the cue's own speed); otherwise it comes from the charged power.
     /// How the stick is carried **after** the strike: by the player's hand, or by the shot itself.
-    private enum FollowThrough {
-        /// The player's own hand, through `carryTheCue`: the follow-through is the mouse's, capped at
-        /// `maxFollowThrough` and at the cloth. A shot played by hand is this.
-        case byHand
-        /// The **shot's own**: a charged shot is played with the hand on the button and not on the cue, so
-        /// the game carries the stick on for it — at the speed it struck with, for `chargedFollowThroughLength(of:)`
-        /// millimetres, and at that **one speed** all the way. See `carryTheChargedFollowThrough`.
-        case charged
-    }
-
     /// Plays the stroke: the **cue's** own speed is what the caller sets, and everything the cue ball does
     /// comes out of that and the point on the ball the tip is striking — see
     /// `ballSpeed(fromCueSpeed:tipOffset:)`.
     ///
     /// `cueSpeed` is the speed of the stick at the moment it meets the ball: the hand's own speed for a
-    /// shot played with `S` (see `playStroke`), and for a **charge** the meter's fraction of
-    /// `maxCueSpeed` — so a full charge is a cue at its fastest and a gentler one is a slower cue. What the
-    /// ball does with that is the strike's business: a centre hit sends it away at `1 + e` times the cue's
-    /// speed, and the further the tip is from the middle of the ball the more of the strike goes on spin
-    /// and the less there is left for travel. The ball's speed is therefore **derived**, and never set
-    /// alongside the cue's.
-    private func beginStroke(cueSpeed: Double? = nil, followThrough: FollowThrough = .byHand) {
+    /// shot played with `S`, and for a **charge** the speed the game's own cue action has brought the cue
+    /// up to (see `ChargedStroke`) — the meter's fraction of `maxCueSpeed`, so a full charge is a cue at
+    /// its fastest and a gentler one is a slower cue. Either way it is the **cue's** speed that is the
+    /// input. What the ball does with it is the strike's business: a centre hit sends it away at `1 + e`
+    /// times the cue's speed, and the further the tip is from the middle of the ball the more of the
+    /// strike goes on spin and the less there is left for travel. The ball's speed is therefore
+    /// **derived**, and never set alongside the cue's.
+    private func beginStroke(cueSpeed: Double? = nil) {
         guard let cue = cueBall, cue.onTable else { return }
         endCueAction()
         // The cue is laid where it fits before it is driven through the ball: the pose the strike is
@@ -1073,19 +1254,6 @@ public final class FrameDriver {
         // fastest it may be carried forward for the rest of the stroke. See `carryTheCue`.
         theStickWasTravellingAt = speed
         placeTheCueAfterTheStrike(of: cue, at: theStickWasTravellingAt)
-        // A charged shot's follow-through is the game's to carry: the length follows the strength of the
-        // shot, from the least a charge can be to a full-power one, and it is measured like
-        // `maxFollowThrough` — **from the middle of the ball it struck**. See
-        // `carryTheChargedFollowThrough`.
-        theStrokeIsCharged = followThrough == .charged
-        if theStrokeIsCharged {
-            theChargedFollowThrough = (target: FrameDriver.chargedFollowThroughLength(of: speed / FrameDriver.maxCueSpeed),
-                                       speed: theStickWasTravellingAt)
-        } else {
-            theChargedFollowThrough = nil
-        }
-        theCueBallHasLeftTheCue = false
-        chargedHoldFramesLeft = 0
         isDownOnTheShot = true
         mode = .simulating
     }
@@ -1139,52 +1307,65 @@ public final class FrameDriver {
     /// stick the player has stopped moving stays where it is. What it has is a speed, which is what a
     /// ball it runs into is answered with, and any ball it does run into is a foul (Rule 11(b)(vi)).
     public func carryTheCue(forwardByMillimetres millimetres: Double, over dt: TimeInterval) {
-        // On a **charged** shot the stick is the shot's, not the mouse's: the hand is on the button rather
-        // than on the cue, and the game carries it through for the player (see
-        // `carryTheChargedFollowThrough`). The mouse may still take the stick **back** off the ball —
-        // pulling it clear is the player's to do and can only make a foul less likely — but it does not
-        // drive it on.
-        carryCue(forwardByMillimetres: theStrokeIsCharged ? min(0, millimetres) : millimetres, over: dt)
+        carryCue(forwardByMillimetres: millimetres, over: dt)
     }
 
-    /// Carries the stick through the ball on a **charged** shot, at the speed it struck with and for the
-    /// length the strength of the shot buys, and then leaves it standing where it stopped.
-    ///
-    /// The speed is held **constant** the whole way, which is what makes a charged shot's follow-through
-    /// look like a stroke rather than a stab: the stick is the shot's own from the moment the button is
-    /// let go, and nothing takes it out of its line or slows it. What stops it is the length, and — as
-    /// with the hand's own follow-through — the cloth or a cushion the tip comes up against, which is
-    /// `carryCue`'s business: whatever it refuses is not counted as travelled.
+    /// Carries the stick through the ball on a **charged** shot: at the speed the shot was played at for
+    /// the first two thirds of the length the strength of the shot buys, braking to a stop over the last
+    /// third of it — or wherever the cloth, a cushion or the rail stops it first, which `carryCue`'s own
+    /// `asFarAsTheTableAllows` sees to. It is the game's hand, so `carryTheCue` is where it comes in.
     private func carryTheChargedFollowThrough(over dt: Double) {
-        guard let followThrough = theChargedFollowThrough, let cue = world.cue else { return }
-        // The beat, where there is one: the ball leaves the cue when the tip's hold has gone and the ball
-        // is no longer on it, and the stick is held **still** there for `chargedFollowThroughHoldFrames`
-        // frames before the rest of the follow-through is carried out. While it is held the stick is not
-        // travelling, so a ball against it is met by a stick that is standing and not by one being driven
-        // on. The frame of the strike itself is the leather's own hold, and is not this beat: it is the
-        // grab that has the ball then, and the grab is what places the tip. The beat is off — none of
-        // them — so the carry below is reached the frame the ball is off the cue, and the stick goes on
-        // from there.
-        if !theCueBallHasLeftTheCue, !world.theCueIsOn(BallID.cue) {
-            theCueBallHasLeftTheCue = true
-            chargedHoldFramesLeft = FrameDriver.chargedFollowThroughHoldFrames
+        guard var stroke = theChargedStroke, stroke.phase == .followingThrough,
+              world.cue != nil else { return }
+        // Stepped finely, as the push is: a stroke's length is not a thing the frame rate may change.
+        var left = max(0, dt)
+        while left > 1e-9, theChargedStroke?.phase == .followingThrough {
+            let step = min(left, 0.002)
+            left -= step
+            stroke.clock += step
+            guard let speed = chargedFollowThroughSpeed(of: &stroke) else {
+                theChargedStroke?.phase = .standing
+                return
+            }
+            theChargedStroke = stroke
+            carryCue(forwardByMillimetres: speed * step, over: step)
         }
-        if chargedHoldFramesLeft > 0 {
-            chargedHoldFramesLeft -= 1
-            if var held = world.cue { held.speed = 0; world.cue = held }
-            cueTravelSpeed = 0
-            return
+    }
+
+    /// How far past the middle of the ball it struck the tip has got, in millimetres — the measure the
+    /// follow-through's length is in, and the one `maxFollowThrough` is in: the tip is a ball's radius
+    /// *behind* the middle when the strike is played, and the length is read from there.
+    private var chargedFollowThroughTravel: Double {
+        guard let cue = world.cue else { return 0 }
+        let along = Vec2(cos(aimAngle), sin(aimAngle))
+        return (Vec2(cue.tip.x, cue.tip.y) - strokeCueStart).dot(along)
+    }
+
+    /// The speed the game's own cue is going at through the follow-through: the speed the shot was played
+    /// at until the tip has been carried **two thirds** of the follow-through, and then a **steady braking**
+    /// which takes it to nothing over the last third of it — so the stick comes to a stop exactly on the
+    /// length, the way a hand brings a cue off the ball, and at a finite time.
+    ///
+    /// The two thirds is a **place** and the braking is a **time**, and that is what makes the length exact:
+    /// the cue is at the shot's speed until it has travelled the two thirds wherever the frames and the
+    /// leather's own contact have left the tip, and then the braking's own arithmetic takes it the rest of
+    /// the way to the length whatever the frame rate is.
+    ///
+    /// Nil once it has stopped: the follow-through is done with.
+    private func chargedFollowThroughSpeed(of stroke: inout ChargedStroke) -> Double? {
+        if stroke.brakingBegan == nil,
+           chargedFollowThroughTravel >= stroke.followThrough * FrameDriver.chargedCueIsUpToSpeedBy {
+            stroke.brakingBegan = stroke.clock
+            // What is left of the length from where the braking **actually** began: the two thirds is a
+            // place, and the step it was noticed on may have carried the tip a little past it. Reading the
+            // rest of the length from that place is what puts the tip on the length exactly.
+            stroke.brakingOver = stroke.followThrough - chargedFollowThroughTravel
         }
-        // The length is a **place**, not a distance travelled: it is measured the way `maxFollowThrough`
-        // is, from the middle of the ball the shot was played at, and the tip is carried until it reaches
-        // it. That is the one measure that survives the strike itself — the tip is on the ball's surface
-        // when the leather lets go, wherever the ball has got to by then — and it is also what lets the
-        // cloth, a cushion or the room behind the ball stop the stick without the length being lost: what
-        // is not travelled is still to be travelled.
-        let whereTheTipIs = Vec2(cue.tip.x, cue.tip.y)
-        let stillToGo = followThrough.target - whereTheTipIs.distance(to: strokeCueStart)
-        guard stillToGo > 0 else { return }
-        carryCue(forwardByMillimetres: min(followThrough.speed * max(0, dt), stillToGo), over: dt)
+        guard let began = stroke.brakingBegan else { return stroke.speed }
+        guard stroke.brakingOver > 0 else { return nil }
+        let deceleration = stroke.speed * stroke.speed / (2 * stroke.brakingOver)
+        let speed = stroke.speed - deceleration * (stroke.clock - began)
+        return speed > 0 ? speed : nil
     }
 
     private func carryCue(forwardByMillimetres millimetres: Double, over dt: TimeInterval) {
@@ -1323,9 +1504,16 @@ public final class FrameDriver {
     /// their way. A caller that wants the cue in play — to see a ball run into it — leaves it on the
     /// table and drives it with `carryTheCue`.
     public func runStrokeToRest(maxSeconds: Double = 30) {
+        var elapsed = 0.0
+        // A **charged** shot is played by the cue action the charge leaves behind, and the shot is not away
+        // until that action has brought the cue through the ball: the runner drives it to the strike before
+        // it takes the stick off the table. Its own clock is the frame's, run on from the last tick it had.
+        while theChargedStroke != nil, elapsed < maxSeconds {
+            elapsed += 1.0 / 120.0
+            updateCharge(at: (lastChargeTick ?? elapsed) + 1.0 / 120.0)
+        }
         standUp()
         world.cue = nil
-        var elapsed = 0.0
         while mode == .simulating && elapsed < maxSeconds {
             update(dt: 1.0 / 120.0)
             elapsed += 1.0 / 120.0
@@ -1412,10 +1600,8 @@ public final class FrameDriver {
         isDownOnTheShot = false
         cueTravelSpeed = 0
         // And the stroke is done with, charged or by hand: the next one sets its own follow-through.
-        theStrokeIsCharged = false
-        theChargedFollowThrough = nil
-        theCueBallHasLeftTheCue = false
-        chargedHoldFramesLeft = 0
+        theChargedStroke = nil
+        theCueActionIsTheGames = false
         world.cue = nil
         ballsTheCueTouched = []
 

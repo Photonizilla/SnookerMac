@@ -1706,10 +1706,14 @@ final class TableScene: SKScene {
         if controller.mode == .simulating {
             let travel = pendingCueTravel
             pendingCueTravel = 0
-            controller.carryTheCue(forwardByMillimetres: travel, over: dt)
+            // A cue action the **game** is playing is not the mouse's to spoil: a charged shot's stroke is
+            // pre-programmed, and the mouse is out of it from the moment the button is let go.
+            if !controller.theCueActionIsTheGames {
+                controller.carryTheCue(forwardByMillimetres: travel, over: dt)
+            }
             return
         }
-        guard controller.isMovingTheCue else {
+        guard controller.isMovingTheCue, !controller.theCueActionIsTheGames else {
             pendingCueTravel = 0
             return
         }
