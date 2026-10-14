@@ -1519,8 +1519,10 @@ final class FrameDriverTests: XCTestCase {
     }
 
     private func playAChargedShot(at power: Double, spin: (side: Double, vertical: Double) = (0, 0),
-                                  fps: Double = 120) -> AChargedShot {
+                                  redAt: Vec2 = Vec2(2900, Table.centreY), fps: Double = 120) -> AChargedShot {
         let d = cueActionSetupInTheOpen()
+        d.game.withState { state in state.ballPositions[BallID.firstRed] = redAt }
+        d.syncWorldFromState()
         if spin.side != 0 || spin.vertical != 0 { d.setSpin(side: spin.side, vertical: spin.vertical) }
         d.aimAngle = 0
         d.beginCharge(at: 0)
@@ -1544,6 +1546,7 @@ final class FrameDriverTests: XCTestCase {
         var phase = d.theChargedStrokePhase
         var thePhaseBegan = letGo
         var struck = false
+        var theFollowThroughHasBegan = false
         var frames = 0
         while frames < 60 * 60, !(struck && d.mode != .simulating) {
             time += 1.0 / fps
@@ -1566,12 +1569,17 @@ final class FrameDriverTests: XCTestCase {
                 thePhaseBegan = time
                 phase = now
             }
-            if struck, let cue = d.cueOnTheTable {
+            // The follow-through is the cue's own once the ball is off it: the frame the strike's own
+            // **contact** is played in is not the follow-through — the tip is on the ball through all of it,
+            // and is carried with it rather than at the shot's speed, so the strike's frame is the last of
+            // the contact and the first of the follow-through at once. See `PhysicsWorld.CueContact`.
+            if struck, theFollowThroughHasBegan, let cue = d.cueOnTheTable {
                 let along = Vec2(cos(d.aimAngle), sin(d.aimAngle))
                 let progress = (Vec2(cue.tip.x, cue.tip.y) - d.strokeWasPlayedFrom).dot(along)
                 shot.followedThroughTo = max(shot.followedThroughTo, progress)
                 shot.followThrough.append((progress, d.cueTravelSpeed))
             }
+            if struck { theFollowThroughHasBegan = true }
         }
         shot.ballSpeedAtTheStrike = made.first { $0.kind == .strike }?.speed ?? 0
         shot.driver = d
@@ -1602,6 +1610,24 @@ final class FrameDriverTests: XCTestCase {
                                              tipOffset: shot.tipOffsetAtTheStrike),
                        shot.ballSpeedAtTheStrike, accuracy: 2,
                        "and the ball's speed is what the strike makes of it and the contact point")
+    }
+
+    /// A hard charged shot throws the cue through the ball at the shot's own speed, and the tip cannot be
+    /// carried **through** the ball it is playing at, whatever step the frame takes it in: the ball is sent
+    /// away and the cue stops where it meets it. So a follow-through cannot run the ball down, and the only
+    /// double hit a charged shot can be given is the ball that comes back to the stick — which is a ball met
+    /// with the player's own equipment and is a foul of its own.
+    ///
+    /// With the ball sent up an open table that one comes back at the better part of a second; what this
+    /// pins down is that nothing happens while the cue is still following through, which is where it used to.
+    func testAHardChargedShotDoesNotRunTheBallDown() {
+        for spin in [(0.0, 0.0), (0.9, 0.0), (0.0, 0.5), (-0.5, -0.5)] {
+            let shot = playAChargedShot(at: 1.0, spin: spin, redAt: Vec2(300, 300))
+            let again = shot.driver.lastStroke?.secondsUntilTheCueBallWasStruckAgain
+            XCTAssertGreaterThan(again ?? 1, 0.3,
+                                 "no second strike while the cue is following through, with spin \(spin) "
+                                 + "(it was \(again.map { "\(Int($0 * 1000)) ms" } ?? "never"))")
+        }
     }
 
     /// **A charge sets the cue's own speed**, and everything the cue ball does comes out of that and the

@@ -1338,6 +1338,21 @@ public final class PhysicsWorld {
         ballsTheCueIsTouching.contains(id)
     }
 
+    /// Whether the **tip** standing at `tip`, the stick running back along `axis`, would be on the ball `id`
+    /// — the same test the contact makes of it (`cueContact`). A stroke outside the physics asks this to
+    /// stop itself: the tip may be carried forward no further than the ball it is playing at, whatever step
+    /// the frame is taking it in.
+    public func theCueTipWouldTouch(_ id: Int, at tip: Vec3, along axis: Vec3) -> Bool {
+        guard let i = index(of: id), balls[i].onTable, let original = cue else { return false }
+        var probe = original
+        probe.tip = tip
+        probe.axis = axis
+        cue = probe
+        let contact = cueContact(with: Vec3(balls[i].position.x, balls[i].position.y, balls[i].height))
+        cue = original
+        return contact != nil
+    }
+
     /// Answers every ball the cue has run into.
     ///
     /// The cue's **position** is the player's: the mouse puts it where it is (see

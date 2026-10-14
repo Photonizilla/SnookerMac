@@ -1395,7 +1395,15 @@ public final class FrameDriver {
         if wanted > 0 {
             wanted = min(wanted, roomToFollowThrough)
         }
-        let allowed = asFarAsTheTableAllows(wanted)
+        var allowed = asFarAsTheTableAllows(wanted)
+        // **And the tip may not be carried through the ball it is playing at.** A stick cannot pass through
+        // a ball: it stops where it meets it, exactly as it stops at the cloth. Without this, a follow-through
+        // that is carried once a frame can land the crown *inside* the ball — a full-power charged shot moves
+        // the tip 28 mm in a frame, and with the tip off the middle of the ball (any spin at all) its crown
+        // stands much nearer the ball's own axis, which is close enough for that one step to overtake it. The
+        // ball the cue **returns** to is another thing entirely and is not this: a stick standing on the table
+        // is a thing a ball runs into, and that is a foul the game calls.
+        if allowed > 0 { allowed = min(allowed, asFarAsTheCueBallAllows(allowed)) }
         let speed = dt > 0
             ? max(-FrameDriver.maxCueSpeed, min(FrameDriver.maxCueSpeed, allowed / dt))
             : 0
@@ -1405,6 +1413,22 @@ public final class FrameDriver {
             cue.speed = speed
             world.cue = cue
         }
+    }
+
+    /// As much of `millimetres` of travel along the cue's own axis as there is before the tip comes up
+    /// against the **ball it struck**: found by halving the difference, the way the cloth is.
+    private func asFarAsTheCueBallAllows(_ millimetres: Double) -> Double {
+        guard millimetres > 0, let cue = world.cue else { return millimetres }
+        func clear(_ travel: Double) -> Bool {
+            !world.theCueTipWouldTouch(BallID.cue, at: cue.tip + cue.axis * travel, along: cue.axis)
+        }
+        if clear(millimetres) { return millimetres }
+        var low = 0.0, high = millimetres
+        for _ in 0..<10 {
+            let middle = (low + high) / 2
+            if clear(middle) { low = middle } else { high = middle }
+        }
+        return low
     }
 
     /// As much of `millimetres` of travel along the cue's own axis as the table allows before the tip
