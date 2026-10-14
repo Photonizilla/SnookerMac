@@ -764,6 +764,17 @@ public final class FrameDriver {
     /// this is the least of it, at the gentlest the meter will go.
     public static let leastChargedFollowThrough: Double = 50
 
+    /// How long a **charged** shot's follow-through is held when the cue ball leaves the cue, in frames.
+    ///
+    /// The strike is played the moment the tip has the ball, and the tip then **has** the ball for the
+    /// softness of the leather (`PhysicsWorld.cueTipGrabSeconds`) — the whole of that moment being the
+    /// stroke's one contact. What follows it is a beat: the stick is stopped dead for this many frames
+    /// the moment the ball is off it, and only then is it carried on through the rest of the
+    /// follow-through. It is what a player's own stroke does — the ball goes, and the cue stands for an
+    /// instant before the arm follows it — and it is measured in **frames** because that is what the beat
+    /// is: two of them, at whatever the table is running at.
+    public static let chargedFollowThroughHoldFrames = 2
+
     /// How far the stick follows through on a **charged** shot, in millimetres, from the middle of the
     /// ball it struck — the same measure `maxFollowThrough` uses.
     ///
@@ -861,6 +872,10 @@ public final class FrameDriver {
     /// **constant** for the whole of the travel. Nil for a stroke played by hand, whose follow-through is
     /// the mouse's.
     private var theChargedFollowThrough: (target: Double, speed: Double)?
+    /// Whether the cue ball has left the cue yet on a charged shot, and how many frames of the beat by
+    /// its leaving are still to run. See `carryTheChargedFollowThrough`.
+    private var theCueBallHasLeftTheCue = false
+    private var chargedHoldFramesLeft = 0
 
     /// How far off centre the tip strikes the ball, in ball radii: the other thing the shot's
     /// strength depends on, because that is the part of the impulse spent on spin.
@@ -1063,6 +1078,8 @@ public final class FrameDriver {
         } else {
             theChargedFollowThrough = nil
         }
+        theCueBallHasLeftTheCue = false
+        chargedHoldFramesLeft = 0
         isDownOnTheShot = true
         mode = .simulating
     }
@@ -1134,6 +1151,23 @@ public final class FrameDriver {
     /// `carryCue`'s business: whatever it refuses is not counted as travelled.
     private func carryTheChargedFollowThrough(over dt: Double) {
         guard let followThrough = theChargedFollowThrough, let cue = world.cue else { return }
+        // The beat: the ball leaves the cue when the tip's hold has gone and the ball is no longer on
+        // it, and the stick is held **still** there for `chargedFollowThroughHoldFrames` frames before
+        // the rest of the follow-through is carried out. While it is held the stick is not travelling,
+        // so a ball against it is met by a stick that is standing and not by one being driven on.
+        // The frame of the strike itself is the leather's own hold, and is not this beat: it is the
+        // grab that has the ball then, and the grab is what places the tip. See
+        // `chargedFollowThroughHoldFrames`.
+        if !theCueBallHasLeftTheCue, !world.theCueIsOn(BallID.cue) {
+            theCueBallHasLeftTheCue = true
+            chargedHoldFramesLeft = FrameDriver.chargedFollowThroughHoldFrames
+        }
+        if chargedHoldFramesLeft > 0 {
+            chargedHoldFramesLeft -= 1
+            if var held = world.cue { held.speed = 0; world.cue = held }
+            cueTravelSpeed = 0
+            return
+        }
         // The length is a **place**, not a distance travelled: it is measured the way `maxFollowThrough`
         // is, from the middle of the ball the shot was played at, and the tip is carried until it reaches
         // it. That is the one measure that survives the strike itself — the tip is on the ball's surface
@@ -1373,6 +1407,8 @@ public final class FrameDriver {
         // And the stroke is done with, charged or by hand: the next one sets its own follow-through.
         theStrokeIsCharged = false
         theChargedFollowThrough = nil
+        theCueBallHasLeftTheCue = false
+        chargedHoldFramesLeft = 0
         world.cue = nil
         ballsTheCueTouched = []
 

@@ -1564,6 +1564,56 @@ final class FrameDriverTests: XCTestCase {
         XCTAssertEqual(full.travelled, FrameDriver.maxFollowThrough, accuracy: 2)
     }
 
+    /// A charged shot's follow-through has a **beat** in it: the stick is held still for
+    /// `chargedFollowThroughHoldFrames` frames the moment the cue ball leaves it, and is then carried on
+    /// through the rest of the follow-through. The shot is played at the strike, the leather has the
+    /// ball for the few milliseconds of the grab, and what the stick does after that is held by the game
+    /// rather than by the hand — so the beat is the game's, and it is counted in frames.
+    func testAChargedShotsFollowThroughIsHeldWhenTheBallLeavesTheCue() {
+        XCTAssertEqual(FrameDriver.chargedFollowThroughHoldFrames, 2)
+        let d = cueActionSetupInTheOpen()
+        d.beginCharge(at: 0)
+        d.updateCharge(at: (1 - FrameDriver.minimumChargePower) * 1.1)
+        d.releaseShot()
+        XCTAssertTrue(d.world.theCueIsOn(BallID.cue),
+                      "the strike is the leather's own hold on the ball, and it begins with the tip on it")
+
+        var held = 0
+        var movingAfterTheHold = 0
+        var theBallHasLeft = false
+        var theHoldIsDone = false
+        var distance = 0.0
+        var frames = 0
+        while d.mode == .simulating, frames < 120 {
+            // The ball is the cue's own while the leather has it; the beat starts when it is off it.
+            let onTheCue = d.world.theCueIsOn(BallID.cue)
+            _ = d.update(dt: 1.0 / 120.0)
+            frames += 1
+            guard let tip = d.cueOnTheTable?.tip else { break }
+            let now = Vec2(tip.x, tip.y).distance(to: d.strokeWasPlayedFrom)
+            if !onTheCue {
+                if !theBallHasLeft {
+                    theBallHasLeft = true
+                    distance = now
+                }
+                if theHoldIsDone {
+                    movingAfterTheHold += 1
+                } else if now > distance + 1e-9 {
+                    theHoldIsDone = true
+                    movingAfterTheHold += 1
+                } else {
+                    held += 1
+                }
+            }
+            distance = max(distance, now)
+        }
+        XCTAssertTrue(theBallHasLeft, "the ball left the cue")
+        XCTAssertEqual(held, FrameDriver.chargedFollowThroughHoldFrames,
+                       "and the stick stood still for the beat by its leaving")
+        XCTAssertGreaterThan(movingAfterTheHold, 0,
+                             "before being carried on through the rest of the follow-through")
+    }
+
     /// **A charge sets the cue's own speed**, and everything the cue ball does comes out of that and the
     /// point on the ball the tip is striking: a centre hit sends it away at `1 + e` times the cue's speed,
     /// and the further off centre the tip is, the more of the same impulse goes on spin and the less is

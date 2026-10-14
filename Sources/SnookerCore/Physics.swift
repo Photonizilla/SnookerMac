@@ -1090,6 +1090,15 @@ public final class PhysicsWorld {
         ballsTheCueIsTouching.insert(id)
     }
 
+    /// Whether the ball `id` is on the stick: in the tip's own hold after a strike, or touching it.
+    ///
+    /// It is how the stroke outside the physics tells when the **cue ball has left the cue** — the last
+    /// moment the leather has it, which is where a charged shot's follow-through takes its beat. See
+    /// `FrameDriver.carryTheChargedFollowThrough`.
+    public func theCueIsOn(_ id: Int) -> Bool {
+        ballsTheCueIsTouching.contains(id)
+    }
+
     /// Answers every ball the cue has run into.
     ///
     /// The cue's **position** is the player's: the mouse puts it where it is (see
