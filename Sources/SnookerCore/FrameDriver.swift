@@ -772,8 +772,8 @@ public final class FrameDriver {
     /// the moment the ball is off it, and only then is it carried on through the rest of the
     /// follow-through. It is what a player's own stroke does — the ball goes, and the cue stands for an
     /// instant before the arm follows it — and it is measured in **frames** because that is what the beat
-    /// is: two of them, at whatever the table is running at.
-    public static let chargedFollowThroughHoldFrames = 2
+    /// is: one of them, at whatever the table is running at.
+    public static let chargedFollowThroughHoldFrames = 1
 
     /// How far the stick follows through on a **charged** shot, in millimetres, from the middle of the
     /// ball it struck — the same measure `maxFollowThrough` uses.

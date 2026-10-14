@@ -1570,7 +1570,7 @@ final class FrameDriverTests: XCTestCase {
     /// ball for the few milliseconds of the grab, and what the stick does after that is held by the game
     /// rather than by the hand — so the beat is the game's, and it is counted in frames.
     func testAChargedShotsFollowThroughIsHeldWhenTheBallLeavesTheCue() {
-        XCTAssertEqual(FrameDriver.chargedFollowThroughHoldFrames, 2)
+        XCTAssertEqual(FrameDriver.chargedFollowThroughHoldFrames, 1)
         let d = cueActionSetupInTheOpen()
         d.beginCharge(at: 0)
         d.updateCharge(at: (1 - FrameDriver.minimumChargePower) * 1.1)
