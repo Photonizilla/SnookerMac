@@ -167,10 +167,164 @@ public final class PhysicsWorld {
     /// Restitution of the cloth: how much of a ball's downward speed comes back off the bed when it
     /// lands on it. The cloth is soft and deadens the bounce by half.
     public static let clothRestitution = 0.5
-    /// Restitution of the cue's tip against the ball: the springiness of the leather, which gives back
-    /// about three quarters of what it takes. See `FrameDriver.ballSpeed`, which is the collision this
-    /// is the restitution of.
-    public static let cueTipRestitution = 0.75
+    // MARK: The tip
+
+    /// How hard the cue's leather is, in **Shore D**: the one figure the tip is given, and the one the
+    /// whole of the contact between the cue and the ball is worked out from.
+    ///
+    /// Tips are sold on this scale — a soft one is about 55, a medium about 65, a hard one 75 to 80 —
+    /// and 70 is a firm playing tip: crisp, and it keeps its shape under the hardest stroke. Nothing
+    /// else about the tip is set by hand. Its modulus, the stiffness of the contact it makes, how long
+    /// it is on the ball, how far it presses into it and what the ball comes away with all follow from
+    /// this number: see `cueTipContactSeconds(forCueSpeed:)` and `cueTipRestitution`.
+    public static let cueTipShoreD: Double = 70
+
+    /// The Young's modulus of the leather, in pascals, for a tip of a given hardness.
+    ///
+    /// For an elastomer the hardness **is** the stiffness, read through the shape of the indentor, so
+    /// the two are one chart apart. On the **D** scale that chart is `10^(0.04 S - 0.7)` MPa — Gent's
+    /// relation, which is how a cushion's hardness is read here (`cushionShoreA`, and 0.0235 a point on
+    /// that scale), carried up on to the harder scale's own slope, because a point of D is worth about
+    /// one and a half points of A. It puts a Shore D 40 leather at 8 MPa, 50 at 20, 60 at 50, 70 at 125
+    /// and 80 at 315, which is where an elastomer of each of those hardnesses sits on the modulus
+    /// charts.
+    public static func cueTipYoungsModulus(tipAt shoreD: Double = cueTipShoreD) -> Double {
+        pow(10.0, 0.04 * shoreD - 0.7) * 1_000_000
+    }
+
+    /// The Young's modulus of the tip the cue is wearing.
+    public static var cueTipYoungsModulus: Double { cueTipYoungsModulus() }
+
+    /// Poisson's ratio of the leather. A rubber does not compress when it is pressed — it is displaced —
+    /// and a half is what that means for the contact.
+    public static let cueTipPoissonsRatio = 0.5
+
+    /// The ball's own elasticity. The rest of the simulation takes a ball as rigid, and it is right to;
+    /// a **contact** is between two bodies, and the second of them is a phenolic resin — 4 GPa, Poisson's
+    /// ratio about 0.35 — so it is a thousand times the leather's stiffness and barely deforms, but it
+    /// is there.
+    public static let ballYoungsModulus = 4.0e9
+    public static let ballPoissonsRatio = 0.35
+
+    /// The **hertzian** pair the tip's dome and the ball make between them: the one radius the two
+    /// bodies are worth as a contact — the dome's curvature is `Table.cueTipCurvature` — and the one
+    /// modulus.
+    public static var cueTipContactRadius: Double {
+        1 / (1 / Table.cueTipCurvature + 1 / Table.ballRadius)
+    }
+
+    public static func cueTipContactModulus(tipAt shoreD: Double = cueTipShoreD) -> Double {
+        1 / ((1 - cueTipPoissonsRatio * cueTipPoissonsRatio) / cueTipYoungsModulus(tipAt: shoreD)
+                    + (1 - ballPoissonsRatio * ballPoissonsRatio) / ballYoungsModulus)
+    }
+
+    /// The modulus of the contact the tip the cue is wearing makes with the ball.
+    public static var cueTipContactModulus: Double { cueTipContactModulus() }
+
+    /// The mass the contact is worth. The cue is the player's hand and does not budge for a ball, so
+    /// what the ball is bounced off is infinitely heavier than it and the pair's mass is the ball's own.
+    static var cueTipContactMass: Double { Table.ballMass }
+
+    /// How long the tip is **on the ball** when it strikes one at `cueSpeed`, in seconds.
+    ///
+    /// A strike is not an instant: the leather presses into the ball and springs back out of it, and the
+    /// time that takes is the Hertz contact time,
+    /// `t = 2.87 (m² / (R E² v))^(1/5)`. It **narrows** as the shot gets firmer — a fifth root, so a
+    /// shot eight times as hard is on the ball for about two thirds of the time — and the whole of it is
+    /// the moment the tip has the ball, which is the stroke's **one contact** (see `grabTheCueBall`). A
+    /// Shore D 70 tip is on the ball for about 1.4 ms at a full charge and about 2 ms at the gentlest
+    /// shot the meter will play, which is the range cue tips are measured in.
+    public static func cueTipContactSeconds(forCueSpeed cueSpeed: Double,
+                                            tipAt shoreD: Double = cueTipShoreD) -> Double {
+        let speed = max(abs(cueSpeed), 1) / 1000                       // m/s
+        let modulus = cueTipContactModulus(tipAt: shoreD)
+        let radius = cueTipContactRadius / 1000                        // m
+        return 2.87 * pow(cueTipContactMass * cueTipContactMass
+                          / (radius * modulus * modulus * speed), 0.2)
+    }
+
+    /// How far the leather is pressed into the ball at the peak of the contact, in millimetres: the
+    /// Hertz impact depth `(15 m v² / (16 sqrt(R) E))^(2/5)` — the same depth a cushion is read by in
+    /// `cushionHold`, here for the tip's own contact. A full charge presses the leather about 1.6 mm
+    /// into the ball; the gentlest charge, well under half a millimetre.
+    public static func cueTipDeflection(forCueSpeed cueSpeed: Double,
+                                        tipAt shoreD: Double = cueTipShoreD) -> Double {
+        pow(15 * cueTipContactMass * cueTipSpeedInMetres(cueSpeed) * cueTipSpeedInMetres(cueSpeed)
+            / (16 * (cueTipContactRadius / 1000).squareRoot()
+               * cueTipContactModulus(tipAt: shoreD)), 0.4) * 1000
+    }
+
+    static func cueTipSpeedInMetres(_ cueSpeed: Double) -> Double {
+        max(abs(cueSpeed), 1) / 1000
+    }
+
+    /// How stiff the contact is at the peak of a strike at `cueSpeed`: the Hertz force there over the
+    /// deflection there, `(4/3) E sqrt(R d)`. A firmer tip is a stiffer contact, and so is a firmer
+    /// strike, because the leather is pressed further into the ball.
+    static func cueTipStiffness(tipAt shoreD: Double, struckAt cueSpeed: Double) -> Double {
+        let modulus = cueTipContactModulus(tipAt: shoreD)
+        let radius = cueTipContactRadius / 1000                        // m
+        let speed = cueTipSpeedInMetres(cueSpeed)
+        let deflection = pow(15 * cueTipContactMass * speed * speed
+                             / (16 * radius.squareRoot() * modulus), 0.4)
+        return (4.0 / 3.0) * modulus * (radius * deflection).squareRoot()
+    }
+
+    /// The restitution the game is played with, and the tip it is read from.
+    ///
+    /// Hardness gives the contact's stiffness and says nothing about how much of the energy the leather
+    /// hands back. How lossy a material is, is its own property and a different one — a tip can be hard
+    /// and dead, or soft and lively — so the damping is the one thing here taken from outside the
+    /// hardness, and it is taken from the tip the game's own feel was set at: a Shore D
+    /// `cueTipTunedShoreD` tip, returning `cueTipTunedRestitution`, three quarters of what it took,
+    /// which is the middle of the range cue tips are measured over. Change `cueTipShoreD` and the tip is
+    /// a different one; leave it and the leather is the same.
+    public static let cueTipTunedRestitution = 0.75
+    public static let cueTipTunedShoreD = 70.0
+
+    /// The strike the contact is read at: a full charge, which is where the power scale's top is set —
+    /// the cue at `FrameDriver.maxPower / (1 + cueTipTunedRestitution)`.
+    static var cueTipReferenceSpeed: Double {
+        FrameDriver.maxPower / (1 + cueTipTunedRestitution)
+    }
+
+    /// The damping of the leather, in N·s/m: the one constant the hardness does not give, solved from
+    /// the tip the game was tuned with returning `cueTipTunedRestitution` at the reference strike. It
+    /// belongs to the leather and does not move when the hardness does — pressing a tip harder makes it
+    /// stiffer, not more lossy — and that is what lets the hardness carry the restitution with it.
+    static var cueTipDamping: Double {
+        let stiffness = cueTipStiffness(tipAt: cueTipTunedShoreD, struckAt: cueTipReferenceSpeed)
+        return 2 * contactDampingRatio(forRestitution: cueTipTunedRestitution)
+            * (stiffness * cueTipContactMass).squareRoot()
+    }
+
+    /// The damping ratio that leaves a spring-damper coming away at `restitution`:
+    /// `e = exp(-pi z / sqrt(1 - z²))`, turned round for `z`.
+    static func contactDampingRatio(forRestitution restitution: Double) -> Double {
+        let a = -log(min(max(restitution, 1e-6), 1)) / Double.pi
+        return a / (1 + a * a).squareRoot()
+    }
+
+    /// Restitution of the tip against the ball: the speed the ball comes away with, over the speed the
+    /// tip met it with. See `FrameDriver.ballSpeed`, which is the collision this is the restitution of.
+    ///
+    /// It comes out of the same contact the time does. The ball is bounced off the leather as off a
+    /// spring with damping in it, and a spring-damper comes away at `e = exp(-pi z / sqrt(1 - z²))` with
+    /// `z = c / (2 sqrt(k m))` — the damping as a fraction of the contact's own stiffness. Hardness
+    /// gives `k`; the damping is the leather's own and is fixed. So a **harder** tip is a stiffer
+    /// contact with the same damping in it, which is a smaller fraction of it, and the ball is on it for
+    /// less time and comes off it with more of its speed: soft to hard, the model returns 0.61 at Shore
+    /// D 55, 0.75 at 70 and 0.82 at 80, and is on the ball for 2.4 ms, 1.4 ms and 1.0 ms in that order.
+    /// That is the direction, and about the size, of what players report of a hard tip against a soft
+    /// one.
+    public static func cueTipRestitution(tipAt shoreD: Double = cueTipShoreD) -> Double {
+        let stiffness = cueTipStiffness(tipAt: shoreD, struckAt: cueTipReferenceSpeed)
+        let z = cueTipDamping / (2 * (stiffness * cueTipContactMass).squareRoot())
+        return exp(-Double.pi * z / (1 - z * z).squareRoot())
+    }
+
+    /// The restitution of the tip the cue is wearing.
+    public static var cueTipRestitution: Double { cueTipRestitution() }
     /// Rolling resistance of the cloth where it is stretched over the wood of a rail rather than over
     /// the slate of the bed.
     ///
@@ -448,17 +602,6 @@ public final class PhysicsWorld {
     /// fifths of what it takes — the tip's leather gives back more, and the cushion's rubber more again.
     public static let cueShaftRestitution = 0.6
 
-    /// How long the tip has hold of the cue ball once it has struck it, in seconds.
-    ///
-    /// A leather tip is soft, and a strike is not an instant: the tip compresses against the ball,
-    /// holds it for a moment, and lets go. Three milliseconds is the figure the softness of the tip
-    /// gives for a firm stroke — a tenth of the length of a frame — and it is what makes a stroke **one
-    /// contact** of the cue and the cue ball: the tip is on the ball for that moment, it is carried
-    /// with it, and the ball is only free of the cue once the leather has let go. A contact made after
-    /// that is a second one, and then it is the double hit of Rule 11(a)(ii). See
-    /// `PhysicsWorld.grabTheCueBall`.
-    public static let cueTipGrabSeconds = 0.003
-
     static let gravity = 9810.0
 
     public private(set) var balls: [Ball]
@@ -501,7 +644,8 @@ public final class PhysicsWorld {
     /// than on every step the contact lasts.
     private var ballsTheCueIsTouching: Set<Int> = []
     /// The tip's hold on the cue ball just after a strike, if it still has it: the ball, and how long
-    /// of the hold is left. See `cueTipGrabSeconds`.
+    /// of the hold is left. The hold is the contact itself — the leather on the ball for its own Hertz
+    /// time, which depends on how hard the shot is: see `cueTipContactSeconds(forCueSpeed:)`.
     private var cueGrab: (ball: Int, seconds: Double)?
     /// Each pocket and its cut, in `PocketID.allCases` order. The cuts are worked out once: the
     /// simulation asks for them on every ball on every step.
@@ -1082,11 +1226,15 @@ public final class PhysicsWorld {
     /// in the set of balls the cue is touching by hand, so that when the tip lets go and the ball runs
     /// free there is nothing to report until it — or another ball — comes back to the stick.
     ///
-    /// The hold is the softness of the leather: see `cueTipGrabSeconds`.
+    /// The hold is the contact itself: the leather is on the ball for the Hertz contact time of the
+    /// strike it is playing — see `cueTipContactSeconds(forCueSpeed:)` — so a firmer shot is on the ball
+    /// for less of it. It is read off the cue's own speed, which is the only thing the two ways of
+    /// playing a stroke differ in, so a shot played by hand and one played by charge are each held for
+    /// what their own strike is worth.
     public func grabTheCueBall(_ id: Int, with cue: Cue) {
         self.cue = cue
         guard index(of: id) != nil else { return }
-        cueGrab = (ball: id, seconds: PhysicsWorld.cueTipGrabSeconds)
+        cueGrab = (ball: id, seconds: PhysicsWorld.cueTipContactSeconds(forCueSpeed: cue.speed))
         ballsTheCueIsTouching.insert(id)
     }
 

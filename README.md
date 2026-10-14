@@ -189,8 +189,8 @@ is still the hand's, so what is drawn is what was asked for. The tip is a spring
 a heavy stick, far heavier than the ball, so the cue does not budge on the strike: the ball is
 answered as a collision with a body that does not move, and a centre-ball hit sends it away at
 **1.75 times the cue's speed** — the tip's own approach, and three quarters of it again for the
-spring (`1 + e`, the leather's restitution being 0.75). Hitting off centre spends part of that
-impulse on spin — the ball turns, the contact point moves away with it, and less is left for
+spring (`1 + e`, the leather's restitution, which the tip's hardness gives). Hitting off centre spends
+part of that impulse on spin — the ball turns, the contact point moves away with it, and less is left for
 travel: half a radius off centre leaves the ball at about three fifths of what a centre hit would.
 The spin comes out of the same impulse, at `omega = (5/2) v k / r`, which is the formula the
 physics applies.
@@ -1032,7 +1032,8 @@ owns the authoritative ball layout (positions and spotting).
   simulation never moves it — the mouse does, along the stick's own line — and nothing a ball does to
   it moves it either. What it has is a **speed**, and every ball it meets is answered as a collision
   with a body that does not budge. The tip is a leather face square to the cue, so a ball in front of
-  it is struck **along the cue's own axis** with the tip's restitution (0.75), and the ball behind it
+  it is struck **along the cue's own axis** with the tip's restitution — 0.75 for a Shore D 70 tip, and
+  `PhysicsWorld.cueTipRestitution` is where that comes from — and the ball behind it
   comes away at `1.75` times the speed of the tip: the whole of the tip's approach, and three quarters
   of it again for the spring. Hitting off centre spends part of that impulse on spin —
   `omega = (5/2) v k / r`, the same figure as before, which is why a 0.4 r offset rolls naturally.
@@ -1081,12 +1082,20 @@ owns the authoritative ball layout (positions and spotting).
   reaches the cloth first once the cue is stood up past the cap's own 24°. See
   `PhysicsWorld.theTipReachesDownTo` and `FrameDriver.carryTheCue`.
 
-  The tip is **soft**, and a strike is not an instant: the leather compresses against the ball, holds
-  it for a moment and lets go — `cueTipGrabSeconds`, three milliseconds, a tenth of a frame. That whole
-  moment is **one contact** of the cue and the cue ball (`PhysicsWorld.grabTheCueBall`). The tip is
-  carried with the ball while it has hold of it, nothing is reported for it, and the ball is only free of
-  the cue once the leather has let go; a contact made after that is a second one, the double hit of Rule
-  11(a)(ii). The stroke is one contact and not two.
+  The tip is **leather of a stated hardness**, and the whole of the contact it makes with the ball is
+  worked out from that one figure rather than set by hand. `PhysicsWorld.cueTipShoreD` is 70 — a firm
+  playing tip — and from it come the leather's modulus (`cueTipYoungsModulus`, the hardness-to-modulus
+  chart for elastomers), the stiffness of the contact a 12 mm dome makes on a 26.25 mm ball
+  (`cueTipContactRadius`, `cueTipContactModulus`), the restitution (`cueTipRestitution`, 0.75 here) and
+  how long the tip is **on the ball** (`cueTipContactSeconds(forCueSpeed:)`). A strike is not an
+  instant: the leather presses into the ball and springs back out, and the time that takes is the Hertz
+  contact time, which narrows as the shot gets firmer — a fifth root of the speed, so a Shore D 70 tip is
+  on the ball about 1.4 ms at a full charge, 2 ms at a gentle one, and presses 1.6 mm into it at the
+  hardest. That whole moment is **one contact** of the cue and the cue ball
+  (`PhysicsWorld.grabTheCueBall`), read off the cue's own speed for both ways of playing the stroke. The
+  tip is carried with the ball while it has hold of it, nothing is reported for it, and the ball is only
+  free of the cue once the leather has let go; a contact made after that is a second one, the double hit
+  of Rule 11(a)(ii). The stroke is one contact and not two.
 
   What the stick does after that depends on who is holding it. A shot played by **hand** keeps the
   hand's own follow-through — the mouse `carryTheCue`s it, watched by the cap below. A shot played by
@@ -1272,6 +1281,15 @@ owns the authoritative ball layout (positions and spotting).
   its angle and the effect comes on with speed. The speed dependence is the physics above; how the
   grip follows the depth is a tuned judgement, in `cushionGripDepth` (0.40: how deep the ball has to
   go for the cushion to have it completely), `cushionShoreA` and `cushionImpactStiffening`.
+
+  The **tip** is read the same way, on the harder scale: `PhysicsWorld.cueTipShoreD` (70) fixes the
+  leather's modulus through the D scale's hardness-to-modulus chart, and its contact time and
+  restitution come out of that — see `cueTipContactSeconds(forCueSpeed:)`. It is not stiffened for the
+  rate of the strike the way the cushion's rubber is: the cushion's factor stands for filled rubber
+  going three times its slow-tested stiffness at a millisecond's notice, and a leather tip's own
+  contact, worked out at face value, already lands at about 1.4 ms at a full charge and 2.4 ms at a
+  Shore D 55 — which is the range real tips are measured over, and the check that says no such factor
+  is owed here.
 
   The collision is solved as a **blend of two outcomes** rather than as one impulse after another,
   because the sliding friction and the grip work on the same contact and undo one another if they

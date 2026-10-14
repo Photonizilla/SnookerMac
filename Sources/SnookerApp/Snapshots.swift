@@ -91,6 +91,7 @@ enum Snapshots {
         mouseAxisProbe()
         cursorProbe()
         frameRateProbe()
+        tipProbe()
         doubleHitProbe()
         breakLogProbe()
         colourChoiceProbe()
@@ -4104,6 +4105,30 @@ enum Snapshots {
         play("a soft shot, hand going on hard", back: 160, push: [50, 50, 50, 50, 200, 200])
         play("a soft shot with heavy side, hand going on", back: 160,
              push: [20, 20, 20, 20, 20, 20, 20, 20, 200, 200], side: 0.9)
+    }
+
+    /// The cue tip, as the material it is: one hardness, and the rest of the contact worked out from it.
+    private static func tipProbe() {
+        let tip = PhysicsWorld.self
+        print("tip probe (leather of a stated hardness, and the contact it makes with the ball)")
+        print(String(format: "  the tip is Shore D %.0f: modulus %.1f MPa, Poisson's ratio %.2f",
+                     tip.cueTipShoreD, tip.cueTipYoungsModulus / 1e6, tip.cueTipPoissonsRatio))
+        print(String(format: "  on a ball of %.1f mm, the contact is worth one radius of %.3f mm and one modulus of %.1f MPa",
+                     Table.ballRadius, tip.cueTipContactRadius, tip.cueTipContactModulus / 1e6))
+        print(String(format: "  restitution %.3f, so a full charge is a cue at %.0f mm/s and a ball at %.0f mm/s",
+                     tip.cueTipRestitution, FrameDriver.maxCueSpeed, FrameDriver.maxPower))
+        print("  and it is on the ball for less time the firmer the shot is:")
+        for speed in [200.0, 500.0, 1000.0, 2000.0, FrameDriver.maxCueSpeed] {
+            print(String(format: "    cue at %5.0f mm/s: %.2f ms on the ball, pressed %.2f mm into it",
+                         speed, tip.cueTipContactSeconds(forCueSpeed: speed) * 1000,
+                         tip.cueTipDeflection(forCueSpeed: speed)))
+        }
+        print("  and a softer or harder tip is a longer or shorter contact and a smaller or larger restitution:")
+        for shoreD in [55.0, 60.0, 70.0, 80.0] {
+            print(String(format: "    Shore D %.0f: restitution %.3f, %.2f ms on the ball at a full charge",
+                         shoreD, tip.cueTipRestitution(tipAt: shoreD),
+                         tip.cueTipContactSeconds(forCueSpeed: FrameDriver.maxCueSpeed, tipAt: shoreD) * 1000))
+        }
     }
 
     /// What the game says of a break: the one line it leaves in the log, and not a line for every ball.

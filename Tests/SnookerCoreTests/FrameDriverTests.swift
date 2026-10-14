@@ -1500,6 +1500,10 @@ final class FrameDriverTests: XCTestCase {
         XCTAssertEqual(d.power, power, accuracy: 0.001, "the charge is where the probe asked for")
         d.releaseShot()
         let from = d.strokeWasPlayedFrom
+        // The tip's progress **along the shot**, not its distance from the ball's middle: the tip is held
+        // behind the ball at the strike and passes the ball's place as the follow-through starts, so the
+        // distance dips through that crossing and the progress does not.
+        let along = Vec2(cos(d.aimAngle), sin(d.aimAngle))
         var travelled = 0.0
         var speeds: [Double] = []
         var movingFrames = 0
@@ -1508,7 +1512,7 @@ final class FrameDriverTests: XCTestCase {
             d.update(dt: 1.0 / 120.0)
             frames += 1
             guard let cue = d.cueOnTheTable else { break }
-            let distance = Vec2(cue.tip.x, cue.tip.y).distance(to: from)
+            let distance = (Vec2(cue.tip.x, cue.tip.y) - from).dot(along)
             // A frame counts as a frame of travel when the tip has moved by more than a crumb: the tip
             // lands on the length to within a few thousandths of a millimetre, and the step or two that
             // creep up on that are the arithmetic of arriving, not the stick being carried on.
@@ -1530,9 +1534,10 @@ final class FrameDriverTests: XCTestCase {
         XCTAssertEqual(full.travelled, FrameDriver.maxFollowThrough, accuracy: 2,
                        "a full charge is carried the whole follow-through, measured from the ball's middle")
         XCTAssertGreaterThan(full.speeds.count, 2, "and the stick was carried on")
-        // Every **full** step of the travel is at the speed the stick struck with; the last step is the
-        // short one that lands the tip exactly on the length, and is the only one that is slower.
-        for speed in full.speeds.dropLast() {
+        // Every step of the travel is at the speed the stick struck with. What is slower is the landing:
+        // the short step that puts the tip exactly on the length, and the crumb of arithmetic after it
+        // that closes the last thousandth of a millimetre.
+        for speed in full.speeds.dropLast(2) {
             XCTAssertEqual(speed, strikeSpeed, accuracy: strikeSpeed * 0.02,
                            "at the speed it struck with, the same speed all the way")
         }
@@ -1585,6 +1590,7 @@ final class FrameDriverTests: XCTestCase {
         var movingAfterTheHold = 0
         var theBallHasLeft = false
         var theHoldIsDone = false
+        let along = Vec2(cos(d.aimAngle), sin(d.aimAngle))
         var distance = 0.0
         var frames = 0
         while d.mode == .simulating, frames < 120 {
@@ -1593,7 +1599,7 @@ final class FrameDriverTests: XCTestCase {
             _ = d.update(dt: 1.0 / 120.0)
             frames += 1
             guard let tip = d.cueOnTheTable?.tip else { break }
-            let now = Vec2(tip.x, tip.y).distance(to: d.strokeWasPlayedFrom)
+            let now = (Vec2(tip.x, tip.y) - d.strokeWasPlayedFrom).dot(along)
             if !onTheCue {
                 if !theBallHasLeft {
                     theBallHasLeft = true

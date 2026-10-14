@@ -896,12 +896,16 @@ final class PhysicsTests: XCTestCase {
     func testTheTipHoldsTheBallItHasStruckForOneContact() {
         let w = PhysicsWorld(balls: [Ball(id: 0, color: .white, position: Vec2(600, 889))])
         let atTheBall = Vec3(600 - Table.ballRadius, 889, Table.ballRadius)
-        w.grabTheCueBall(0, with: Cue(tip: atTheBall, axis: Vec3(1, 0, 0), speed: 0))
+        // The cue's own speed that sends the ball away at 2000: a centre hit gives the ball `1 + e`
+        // times the cue's speed, and the contact the tip is held for is worked out from it.
+        let cueSpeed = 2000 / (1 + PhysicsWorld.cueTipRestitution)
+        let hold = PhysicsWorld.cueTipContactSeconds(forCueSpeed: cueSpeed)
+        w.grabTheCueBall(0, with: Cue(tip: atTheBall, axis: Vec3(1, 0, 0), speed: cueSpeed))
         w.applyCueStrike(cueBallID: 0, direction: Vec2(1, 0), power: 2000, side: 0, vertical: 0)
 
         // Through the strike and its own contact: the tip is carried with the ball, and nothing is
         // reported — the stroke is one contact and not a touch followed by a foul.
-        w.step(dt: 1.0 / 480.0)          // one step of the stroke: still inside the hold
+        w.step(dt: hold / 8)             // a step of the stroke, well inside the contact
         guard let cue = w.cue else { return XCTFail("the cue is on the table") }
         let ball = w.balls[0]
         let reach = (cue.tip - Vec3(ball.position.x, ball.position.y, ball.height)).length
@@ -911,7 +915,8 @@ final class PhysicsTests: XCTestCase {
 
         // The tip has let go. A ball that comes back to the stick now *is* a contact.
         w.clearEvents()
-        for _ in 0..<4 { w.step(dt: 1.0 / 480.0) }    // the tip lets go
+        w.step(dt: hold)                              // the tip lets go
+        w.step(dt: 1.0 / 480.0)                       // and the ball runs off the tip
         w.place(ballID: 0, at: Vec2(cue.tip.x, cue.tip.y))
         w.step(dt: 1.0 / 480.0)
         XCTAssertTrue(w.events.contains { if case .cueTouched = $0 { return true }; return false },
@@ -922,8 +927,62 @@ final class PhysicsTests: XCTestCase {
             return nil
         }.first
         XCTAssertNotNil(after)
-        XCTAssertGreaterThan(after ?? 0, PhysicsWorld.cueTipGrabSeconds,
-                             "past the tip's own hold on the ball")
+        XCTAssertGreaterThan(after ?? 0, hold, "past the tip's own contact with the ball")
+    }
+
+    /// The tip is **leather of a stated hardness**, and the whole of the contact it makes with the ball is
+    /// worked out from that one figure: its modulus, the stiffness of the contact, how long it is on the
+    /// ball, how far it presses into it, and what the ball comes away with.
+    func testTheTipIsLeatherOfAStatedHardnessAndTheContactFollowsFromIt() {
+        XCTAssertEqual(PhysicsWorld.cueTipShoreD, 70, "a firm playing tip, which is the one set")
+
+        // Hardness and modulus are one chart apart, and the chart is the hardness-to-modulus one for
+        // elastomers: a Shore D tip of each hardness sits where an elastomer of that hardness sits.
+        for (shoreD, megapascals) in [(40.0, 8.0), (50.0, 20.0), (60.0, 50.0), (70.0, 126.0), (80.0, 316.0)] {
+            XCTAssertEqual(PhysicsWorld.cueTipYoungsModulus(tipAt: shoreD) / 1e6, megapascals,
+                           accuracy: megapascals * 0.03, "a Shore D \(shoreD) leather")
+        }
+
+        // The contact is a dome of 12 mm on a ball of 26.25: one radius, one modulus, and the ball's own
+        // mass against a cue that does not budge for it.
+        XCTAssertEqual(PhysicsWorld.cueTipContactRadius, 8.24, accuracy: 0.01,
+                       "the radius the dome and the ball are worth together")
+        XCTAssertEqual(PhysicsWorld.cueTipContactModulus / 1e6, 161.9, accuracy: 1,
+                       "and the modulus of the contact: the leather's, for the most of it")
+
+        // The time the tip is on the ball is the Hertz contact time, and it narrows as the shot gets
+        // firmer — a fifth root of the speed, so eight times the shot is about two thirds of the time.
+        let hard = PhysicsWorld.cueTipContactSeconds(forCueSpeed: FrameDriver.maxCueSpeed)
+        let gentle = PhysicsWorld.cueTipContactSeconds(forCueSpeed: 200)
+        XCTAssertEqual(hard * 1000, 1.40, accuracy: 0.02, "a full charge is on the ball for 1.4 ms")
+        XCTAssertEqual(gentle * 1000, 2.47, accuracy: 0.03, "and the gentlest shot for about two and a half")
+        XCTAssertGreaterThan(gentle, hard, "so a firmer shot is on the ball for less of it")
+        XCTAssertEqual(gentle / hard, pow(FrameDriver.maxCueSpeed / 200, 0.2), accuracy: 0.03,
+                       "and it is the speed's own fifth root that narrows it")
+
+        XCTAssertEqual(PhysicsWorld.cueTipDeflection(forCueSpeed: FrameDriver.maxCueSpeed), 1.63,
+                       accuracy: 0.05, "a full charge presses the leather about 1.6 mm into the ball")
+
+        // What the ball comes away with is read off the same contact: the restitution the game is tuned
+        // at, from the tip it is tuned with — so the power scale's top is the ball speed it always was.
+        XCTAssertEqual(PhysicsWorld.cueTipRestitution, PhysicsWorld.cueTipTunedRestitution, accuracy: 1e-9,
+                       "the tip the game was tuned on is the tip it is wearing")
+        XCTAssertEqual(FrameDriver.maxCueSpeed * (1 + PhysicsWorld.cueTipRestitution), FrameDriver.maxPower,
+                       accuracy: 0.5, "so a full charge is still the top of the power scale")
+
+        // And the hardness carries both of them: a harder tip is a stiffer contact, on the ball for less
+        // time and returning more of the speed; a softer one is the other way round.
+        let hardnesses = [55.0, 60.0, 70.0, 80.0]
+        let restitutions = hardnesses.map { PhysicsWorld.cueTipRestitution(tipAt: $0) }
+        let times = hardnesses.map {
+            PhysicsWorld.cueTipContactSeconds(forCueSpeed: FrameDriver.maxCueSpeed, tipAt: $0)
+        }
+        XCTAssertEqual(restitutions, restitutions.sorted(), "harder tips give more of the speed back")
+        XCTAssertEqual(times, times.sorted(by: >), "and are on the ball for less time")
+        XCTAssertEqual(restitutions.first ?? 0, 0.61, accuracy: 0.02, "a soft tip, Shore D 55")
+        XCTAssertEqual(restitutions.last ?? 0, 0.82, accuracy: 0.02, "and a hard one, Shore D 80")
+        XCTAssertEqual((times.first ?? 0) * 1000, 2.40, accuracy: 0.05, "2.4 ms on the ball at Shore D 55")
+        XCTAssertEqual((times.last ?? 0) * 1000, 0.99, accuracy: 0.05, "and under a millisecond at 80")
     }
 
     /// The tip is a dome, and it is what puts a stop to a cue driven on into the table: the dome comes

@@ -767,8 +767,8 @@ public final class FrameDriver {
     /// How long a **charged** shot's follow-through is held when the cue ball leaves the cue, in frames.
     ///
     /// The strike is played the moment the tip has the ball, and the tip then **has** the ball for the
-    /// softness of the leather (`PhysicsWorld.cueTipGrabSeconds`) — the whole of that moment being the
-    /// stroke's one contact. What follows it is a beat: the stick is stopped dead for this many frames
+    /// contact itself (`PhysicsWorld.cueTipContactSeconds(forCueSpeed:)`) — the whole of that moment
+    /// being the stroke's one contact. What follows it is a beat: the stick is stopped dead for this many frames
     /// the moment the ball is off it, and only then is it carried on through the rest of the
     /// follow-through. It is what a player's own stroke does — the ball goes, and the cue stands for an
     /// instant before the arm follows it — and it is measured in **frames** because that is what the beat
@@ -790,8 +790,9 @@ public final class FrameDriver {
             + (maxFollowThrough - leastChargedFollowThrough) * wayAlong
     }
 
-    /// Restitution of the tip against the ball. A leather tip is not a spring: about 0.75.
-    public static let cueTipRestitution = PhysicsWorld.cueTipRestitution
+    /// Restitution of the tip against the ball, worked out from the leather it is made of: see
+    /// `PhysicsWorld.cueTipRestitution`, which is the model and the figures it gives.
+    public static var cueTipRestitution: Double { PhysicsWorld.cueTipRestitution }
 
     /// The fastest the tip can be travelling, in mm/s: a centre-ball hit — the most the physics will
     /// give — comes off the cue ball at `maxPower`, and half again as fast as the range the game was
