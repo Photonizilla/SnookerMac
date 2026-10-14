@@ -1572,13 +1572,13 @@ final class FrameDriverTests: XCTestCase {
         XCTAssertEqual(full.travelled, FrameDriver.maxFollowThrough, accuracy: 2)
     }
 
-    /// A charged shot's follow-through has a **beat** in it: the stick is held still for
-    /// `chargedFollowThroughHoldFrames` frames the moment the cue ball leaves it, and is then carried on
-    /// through the rest of the follow-through. The shot is played at the strike, the leather has the
-    /// ball for the few milliseconds of the grab, and what the stick does after that is held by the game
-    /// rather than by the hand — so the beat is the game's, and it is counted in frames.
-    func testAChargedShotsFollowThroughIsHeldWhenTheBallLeavesTheCue() {
-        XCTAssertEqual(FrameDriver.chargedFollowThroughHoldFrames, 1)
+    /// A charged shot's follow-through is carried on from the moment the cue ball leaves the cue, with
+    /// nothing between the strike and the stick's going on after it: the **beat** is off
+    /// (`chargedFollowThroughHoldFrames` is none of them). The shot is played at the strike, the leather
+    /// has the ball for the few milliseconds of the contact, and what the stick does after that is held by
+    /// the game rather than by the hand.
+    func testAChargedShotsFollowThroughGoesOnWhenTheBallLeavesTheCue() {
+        XCTAssertEqual(FrameDriver.chargedFollowThroughHoldFrames, 0, "the beat is off")
         let d = cueActionSetupInTheOpen()
         d.beginCharge(at: 0)
         d.updateCharge(at: (1 - FrameDriver.minimumChargePower) * 1.1)
@@ -1586,41 +1586,38 @@ final class FrameDriverTests: XCTestCase {
         XCTAssertTrue(d.world.theCueIsOn(BallID.cue),
                       "the strike is the leather's own hold on the ball, and it begins with the tip on it")
 
-        var held = 0
-        var movingAfterTheHold = 0
-        var theBallHasLeft = false
-        var theHoldIsDone = false
         let along = Vec2(cos(d.aimAngle), sin(d.aimAngle))
-        var distance = 0.0
+        var stillAfterTheBallLeft = 0
+        var theBallHasLeft = false
+        var progress = 0.0
+        var carried = 0.0
         var frames = 0
         while d.mode == .simulating, frames < 120 {
-            // The ball is the cue's own while the leather has it; the beat starts when it is off it.
+            // The ball is the cue's own while the leather has it; the carry of the follow-through is what
+            // the frames after that are.
             let onTheCue = d.world.theCueIsOn(BallID.cue)
             _ = d.update(dt: 1.0 / 120.0)
             frames += 1
             guard let tip = d.cueOnTheTable?.tip else { break }
             let now = (Vec2(tip.x, tip.y) - d.strokeWasPlayedFrom).dot(along)
             if !onTheCue {
-                if !theBallHasLeft {
-                    theBallHasLeft = true
-                    distance = now
-                }
-                if theHoldIsDone {
-                    movingAfterTheHold += 1
-                } else if now > distance + 1e-9 {
-                    theHoldIsDone = true
-                    movingAfterTheHold += 1
-                } else {
-                    held += 1
+                // Only the frames the follow-through is still to be carried in are counted: once the tip
+                // is on the length it has nothing left to do and stands there for the rest of the stroke.
+                if theBallHasLeft, now <= progress + 1e-9 { stillAfterTheBallLeft += 1 }
+                theBallHasLeft = true
+                if now >= FrameDriver.maxFollowThrough - 0.5 {
+                    carried = max(carried, now)
+                    break
                 }
             }
-            distance = max(distance, now)
+            progress = now
+            carried = max(carried, now)
         }
         XCTAssertTrue(theBallHasLeft, "the ball left the cue")
-        XCTAssertEqual(held, FrameDriver.chargedFollowThroughHoldFrames,
-                       "and the stick stood still for the beat by its leaving")
-        XCTAssertGreaterThan(movingAfterTheHold, 0,
-                             "before being carried on through the rest of the follow-through")
+        XCTAssertEqual(stillAfterTheBallLeft, 0,
+                       "and the stick was going on already in the frame the ball left it")
+        XCTAssertEqual(carried, FrameDriver.maxFollowThrough, accuracy: 2,
+                       "carried the whole follow-through, with nothing standing between the two")
     }
 
     /// **A charge sets the cue's own speed**, and everything the cue ball does comes out of that and the

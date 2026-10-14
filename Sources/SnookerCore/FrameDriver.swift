@@ -764,16 +764,21 @@ public final class FrameDriver {
     /// this is the least of it, at the gentlest the meter will go.
     public static let leastChargedFollowThrough: Double = 50
 
-    /// How long a **charged** shot's follow-through is held when the cue ball leaves the cue, in frames.
+    /// How long a **charged** shot's follow-through is held when the cue ball leaves the cue, in frames:
+    /// a **beat** between the strike and the stick going on after it.
     ///
     /// The strike is played the moment the tip has the ball, and the tip then **has** the ball for the
-    /// contact itself (`PhysicsWorld.cueTipContactSeconds(forCueSpeed:)`) — the whole of that moment
-    /// being the stroke's one contact. What follows it is a beat: the stick is stopped dead for this many frames
-    /// the moment the ball is off it, and only then is it carried on through the rest of the
-    /// follow-through. It is what a player's own stroke does — the ball goes, and the cue stands for an
-    /// instant before the arm follows it — and it is measured in **frames** because that is what the beat
-    /// is: one of them, at whatever the table is running at.
-    public static let chargedFollowThroughHoldFrames = 1
+    /// contact itself (`PhysicsWorld.cueTipContactSeconds(forCueSpeed:)`) — the whole of that moment being
+    /// the stroke's one contact. A beat after it is what a player's own stroke does: the ball goes, and
+    /// the cue stands for an instant before the arm follows it through. It is measured in **frames**
+    /// because that is what the beat is, at whatever the table is running at.
+    ///
+    /// It is **off**, at none of them: the charged follow-through is carried on from the moment the ball
+    /// is off the cue, with nothing between the strike and the stick going on after it. The beat was tried
+    /// at two frames and at one, and it moved each of the double hits it was meant to answer by about its
+    /// own length and removed none of them, so it was not worth the look of it. The machinery is left
+    /// standing and this is the one number that turns it on.
+    public static let chargedFollowThroughHoldFrames = 0
 
     /// How far the stick follows through on a **charged** shot, in millimetres, from the middle of the
     /// ball it struck — the same measure `maxFollowThrough` uses.
@@ -1152,13 +1157,14 @@ public final class FrameDriver {
     /// `carryCue`'s business: whatever it refuses is not counted as travelled.
     private func carryTheChargedFollowThrough(over dt: Double) {
         guard let followThrough = theChargedFollowThrough, let cue = world.cue else { return }
-        // The beat: the ball leaves the cue when the tip's hold has gone and the ball is no longer on
-        // it, and the stick is held **still** there for `chargedFollowThroughHoldFrames` frames before
-        // the rest of the follow-through is carried out. While it is held the stick is not travelling,
-        // so a ball against it is met by a stick that is standing and not by one being driven on.
-        // The frame of the strike itself is the leather's own hold, and is not this beat: it is the
-        // grab that has the ball then, and the grab is what places the tip. See
-        // `chargedFollowThroughHoldFrames`.
+        // The beat, where there is one: the ball leaves the cue when the tip's hold has gone and the ball
+        // is no longer on it, and the stick is held **still** there for `chargedFollowThroughHoldFrames`
+        // frames before the rest of the follow-through is carried out. While it is held the stick is not
+        // travelling, so a ball against it is met by a stick that is standing and not by one being driven
+        // on. The frame of the strike itself is the leather's own hold, and is not this beat: it is the
+        // grab that has the ball then, and the grab is what places the tip. The beat is off — none of
+        // them — so the carry below is reached the frame the ball is off the cue, and the stick goes on
+        // from there.
         if !theCueBallHasLeftTheCue, !world.theCueIsOn(BallID.cue) {
             theCueBallHasLeftTheCue = true
             chargedHoldFramesLeft = FrameDriver.chargedFollowThroughHoldFrames
