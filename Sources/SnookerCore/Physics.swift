@@ -1287,7 +1287,14 @@ public final class PhysicsWorld {
     public func step(dt: Double) {
         var remaining = dt
         while remaining > 1e-9 {
-            let maxSpeed = balls.filter { $0.onTable }.map { $0.velocity.length }.max() ?? 0
+            // A step is short enough that no ball moves more than a millimetre and a half in it — and short
+            // enough for a strike's own **contact**, where the ball goes from standing to the speed of the
+            // shot in about a millisecond. A contact is not resolved by one four-millisecond step: the
+            // whole of it happens between two of the ball's positions, and the ball loses the first half of
+            // its first frame of travel — which is what let a hard charged shot's own follow-through, jumping
+            // forward once a frame, land inside the ball it had just sent away. See `CueContact`.
+            var maxSpeed = balls.filter { $0.onTable }.map { $0.velocity.length }.max() ?? 0
+            if let contact = cueContact { maxSpeed = max(maxSpeed, contact.velocity.length) }
             let cap = maxSpeed > 1 ? 1.5 / maxSpeed : remaining
             let h = min(remaining, cap, 1.0 / 240.0)
             clock += h

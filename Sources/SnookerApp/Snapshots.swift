@@ -2103,15 +2103,20 @@ enum Snapshots {
             Ball(id: BallID.firstRed, color: .red, position: Vec2(1400, 889 + 26)),
         ])
         cut.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(1, 0), power: 1500, side: 0, vertical: 0.4)
+        // The strike's own contact first — the cue ball has nothing until the tip has let it go — and then
+        // fine steps, so that the **line of centres** is read where the balls actually met rather than six
+        // millimetres short of it: a twenty-fourth of a second is that far at this pace, and half a degree
+        // of the line is the difference between the object ball being thrown towards it and past it.
+        while cut.aStrikeIsBeingPlayed { cut.step(dt: 1.0 / 2400.0) }
         var cutClock = 0.0
         let cutBefore = cut.balls[0].velocity
         var lineOfCentres = Vec2(1, 0)
         while cutClock < 0.5, cut.balls[1].velocity.length < 1 {
             lineOfCentres = (cut.balls[1].position - cut.balls[0].position).normalized
-            cut.step(dt: 1.0 / 240.0)
-            cutClock += 1.0 / 240.0
+            cut.step(dt: 1.0 / 2400.0)
+            cutClock += 1.0 / 2400.0
         }
-        cut.step(dt: 1.0 / 240.0)
+        cut.step(dt: 1.0 / 2400.0)
         let cueOut = cut.balls[0].velocity, redOut = cut.balls[1].velocity
         let separation = cueOut.length > 1 && redOut.length > 1
             ? acos(max(-1, min(1, cueOut.normalized.dot(redOut.normalized)))) * 180 / .pi

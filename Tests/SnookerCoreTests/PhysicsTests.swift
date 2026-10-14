@@ -570,11 +570,14 @@ final class PhysicsTests: XCTestCase {
         var lineOfCentres = Vec2(1, 0)
         var before = world.balls[0].velocity
         var t = 0.0
+        // Fine steps, so that the momentum either side of the collision is sampled either side of the
+        // collision: a step of a twenty-fourth of a second is a twentieth of a second of the sliding
+        // cloth's worth of speed, which is momentum the collision would be blamed for.
         while t < 1, world.balls[1].velocity.length < 1 {
             lineOfCentres = (world.balls[1].position - world.balls[0].position).normalized
             before = world.balls[0].velocity
-            world.step(dt: 1.0 / 240.0)
-            t += 1.0 / 240.0
+            world.step(dt: 1.0 / 2400.0)
+            t += 1.0 / 2400.0
         }
         return (before, (world.balls[0].velocity, world.balls[1].velocity), lineOfCentres)
     }

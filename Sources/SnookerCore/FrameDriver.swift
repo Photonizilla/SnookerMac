@@ -1467,11 +1467,15 @@ public final class FrameDriver {
         let step = 1.0 / 240.0
         var remaining = min(dt, 0.1)
         while remaining > 0 {
+            // The frame's own subdivision, and never **past the frame**: a caller that asks for a shorter
+            // step — a test, a probe, a frame the window ran short — gets the step it asked for, not a
+            // twenty-fourth of a second of simulation it did not.
+            let h = min(step, remaining)
             world.clearEvents()
-            world.step(dt: step)
+            world.step(dt: h)
             collectEvents(world.events)
-            remaining -= step
-            simulationClock += step
+            remaining -= h
+            simulationClock += h
             if simulationClock > 25 || world.allAtRest { break }
         }
         if world.allAtRest || simulationClock > 25 {
