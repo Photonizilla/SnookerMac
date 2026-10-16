@@ -36,6 +36,148 @@ final class TableScene: SKScene {
 
     let controller = FrameDriver()
 
+    // MARK: - The computer opponent
+
+    /// The computers, by the seat each is playing: empty is a game between two people, which is what the
+    /// game has always been. The menu fills one of the two seats; both can be filled, and then the game
+    /// plays itself.
+    private var computers: [Int: ComputerPlayer] = [:]
+    /// Whether a decision is being worked out right now.
+    private var isThinking = false
+    /// The position a decision has already been asked about, so that the same one is not asked about
+    /// again and again — which is what a computer that answers "nothing to do" would otherwise cause.
+    private var askedAbout: String?
+    /// The answer, when it comes back from the thinking queue.
+    private var answer: ComputerPlayer.Action?
+    /// A shot that has been lined up and is waiting its moment: the cue is seen to settle on the ball
+    /// before the stroke is played, rather than the balls simply going.
+    private var shotOwed: Shot?
+    private var shotOwedAt: TimeInterval = 0
+    /// Deciding means playing shots out — tens of them, on copies of the frame — so it is done off the
+    /// main thread and the picture keeps being drawn while the computer thinks.
+    private static let thinking = DispatchQueue(label: "snooker.the.computer", qos: .userInitiated)
+    /// How long the cue stands on the ball before the stroke is played.
+    private static let theTurnOfTheCue: TimeInterval = 0.55
+
+    /// Whether the computer is the one to play now.
+    var theComputerIsAtTheTable: Bool {
+        computerAtTheTable != nil
+    }
+
+    /// The computer whose turn it is, if any.
+    private var computerAtTheTable: ComputerPlayer? {
+        guard !controller.isFrameOver else { return nil }
+        return computers[controller.game.state.currentPlayer]
+    }
+
+    var computerOpponentIsOn: Bool { !computers.isEmpty }
+    /// Whether the computer is playing that seat.
+    func isPlayingTheComputer(_ seat: Int) -> Bool { computers[seat] != nil }
+    var computerDifficulty: ComputerPlayer.Difficulty {
+        computers[1]?.difficulty ?? computers.values.first?.difficulty ?? .medium
+    }
+
+    /// Who plays the two seats of a new game. It is the answer to the question Escape asks, and the one
+    /// choice the game needs from a player who is starting again.
+    enum GameMode: String, CaseIterable, Sendable {
+        case humanVersusHuman = "Human vs Human"
+        case humanVersusComputer = "Human vs Computer"
+        case computerVersusComputer = "Computer vs Computer"
+
+        var asksForADifficulty: Bool { self != .humanVersusHuman }
+        var isAllComputer: Bool { self == .computerVersusComputer }
+    }
+
+    /// The mode whose difficulty is being chosen now, if the player is part-way through answering the
+    /// new-game question: picking a mode with a computer in it asks one more thing.
+    private var modeAwaitingADifficulty: GameMode?
+    /// True while a game between two computers is **paused**: the question is up and neither of them plays.
+    private(set) var theGameIsPaused = false
+
+    /// Starts a new match with the players the player asked for: two people, a person and the computer, or
+    /// the computer against itself. The seat the computer takes in a human game is drawn at random, so
+    /// that a game against it is a game against it and not always the same seat.
+    func startNewGame(mode: GameMode, difficulty: ComputerPlayer.Difficulty = .medium) {
+        for seat in 0...1 { setComputerOpponent(false, playing: seat) }
+        switch mode {
+        case .humanVersusHuman:
+            break
+        case .humanVersusComputer:
+            setComputerOpponent(true, difficulty: difficulty, playing: Bool.random() ? 0 : 1)
+        case .computerVersusComputer:
+            for seat in 0...1 { setComputerOpponent(true, difficulty: difficulty, playing: seat) }
+        }
+        theGameIsPaused = false
+        modeAwaitingADifficulty = nil
+        controller.keepPlaying()
+        controller.startTheNewGame()
+        wake()
+        requestRefresh()
+    }
+
+    /// What **Escape** does. It asks about a new game and puts the question away again — except in a game
+    /// between two computers, where there is nobody at the table to ask and the question is a **pause**:
+    /// the picture stops where it is until the player says to carry on.
+    func escapePressed() {
+        if controller.isAskingAboutANewGame {
+            keepPlaying()
+            return
+        }
+        // Whatever is in hand goes down first: a cue drawn back or a charge building is not something to
+        // leave half-played under a question.
+        controller.cancelCueAction()
+        isHoldingCueKey = false
+        modeAwaitingADifficulty = nil
+        theGameIsPaused = computers.count == 2
+        controller.askToStartANewGame()
+        requestRefresh()
+    }
+
+    /// Puts the new-game question away and lets the game carry on.
+    func keepPlaying() {
+        controller.keepPlaying()
+        modeAwaitingADifficulty = nil
+        theGameIsPaused = false
+        wake()
+        requestRefresh()
+    }
+
+    /// Turns the computer opponent on or off. Playing, it takes the second player's seat — the game's own
+    /// "Dr. Ker" — and the first player is the person at the keyboard.
+    func setComputerOpponent(_ on: Bool, difficulty: ComputerPlayer.Difficulty = .medium,
+                             playing player: Int = 1,
+                             aimError: Double? = nil) {
+        if on {
+            let computer = ComputerPlayer(playerIndex: player, difficulty: difficulty)
+            // A cue action that never misses is not a player anyone would recognise: it is left slightly
+            // fallible, and the search it runs takes that into account before it chooses. How fallible is
+            // the difficulty's own business unless the caller has said otherwise.
+            computer.aimError = aimError ?? difficulty.aimError
+            computers[player] = computer
+        } else {
+            computers[player] = nil
+        }
+        isThinking = false
+        askedAbout = nil
+        answer = nil
+        shotOwed = nil
+        wake()
+        requestRefresh()
+    }
+
+    func setComputerDifficulty(_ difficulty: ComputerPlayer.Difficulty) {
+        for computer in computers.values { computer.difficulty = difficulty }
+    }
+
+    /// What the frame is, in a line: enough of it that a decision already asked about can be told from a
+    /// decision worth asking about again. The balls only move while a stroke is running or a cue ball is
+    /// being placed, and both of those show up here.
+    private var thePositionInShort: String {
+        let state = controller.game.state
+        return "\(state.currentPlayer)|\(controller.mode)|\(state.pending != nil)|\(state.cueBallInHand)"
+            + "|\(state.ballOn)|\(state.redsRemaining)|\(state.scores[0])-\(state.scores[1])"
+    }
+
     /// The 3D table, when the app has one. `nil` in a headless test harness.
     var table3D: Table3D?
     /// The game's sound, when the app has any. `nil` in a headless test harness, which makes it silent:
@@ -296,6 +438,19 @@ final class TableScene: SKScene {
             && (controller.mode == .aiming || controller.mode == .charging
                 || controller.mode == .decision || controller.mode == .simulating)
     }
+
+    /// Whether the player is up and about rather than at the table. It is true with the cue put away, and
+    /// it is true **while the computer is at the table**: nobody who is watching a shot is standing at it.
+    private var thePlayerMayWalkAbout: Bool {
+        guard viewMode == .firstPerson else { return false }
+        if theComputerIsAtTheTable { return true }
+        return canWalkAbout
+    }
+
+    /// Which way the **watcher's own head** is turned, while the computer is at the table: the aim belongs
+    /// to the computer's cue and looking about is not the same thing as steering it. It is taken up from
+    /// the aim the moment the computer's turn begins, so that the view does not jump.
+    private(set) var watchingYaw: Double = 0
     /// How far the mouse has moved the cue so far this frame, waiting for the frame loop to apply it.
     /// The cue is moved once a frame rather than once an event so that its speed — which is the
     /// shot's strength — is measured over a known time rather than over the gaps between mouse
@@ -706,7 +861,7 @@ final class TableScene: SKScene {
         ("The game", true),
         ("N — a new frame: the scores go and the match carries on (asks first)", false),
         ("R — re-rack the frame: every score in it goes (asks first)", false),
-        ("Esc — a new game: clears the frames and the scores (asks first)", false),
+        ("Esc — a new game: human or computer, easy, medium or hard (asks first; pauses a computer game)", false),
         ("Shift-C — concede the frame", false),
         ("M — sound on or off", false),
         ("P O R U — after a foul: play on, offender plays, replace the balls, undo", false),
@@ -1033,6 +1188,9 @@ final class TableScene: SKScene {
         parts.append(controller.isAskingAboutANewFrame ? "asked about a new frame" : "-")
         parts.append(controller.isAskingAboutAReRack ? "asked about a re-rack" : "-")
         parts.append(controller.isAskingAboutANewGame ? "asked about a new game" : "-")
+        parts.append(theGameIsPaused ? "paused" : "-")
+        parts.append(modeAwaitingADifficulty?.rawValue ?? "-")
+        parts.append(computers.count == 2 ? "computer against computer" : "\(computers.count) computers")
         parts.append(isShowingHelp ? "help up" : "-")
         parts.append(controller.cueHandling.rawValue)
         parts.append(controller.status)
@@ -1045,6 +1203,115 @@ final class TableScene: SKScene {
     }
 
     // MARK: - Per-frame refresh
+
+    // MARK: - The computer's turn
+
+    /// The computer's cue is on the table while its stroke runs, and a ball coming back at the stick is a
+    /// ball met with the player's own equipment — a foul (Rule 11(b)(vi)), and the one thing a player
+    /// watching the balls does something about. The computer takes it up in time and lays it again for its
+    /// next stroke.
+    private func theComputerLooksAfterItsCue() {
+        guard theComputerIsAtTheTable else { return }
+        if controller.aBallIsHeadingForTheCue {
+            controller.takeTheCueOffTheTable()
+            requestRefresh()
+            return
+        }
+        // Balls at rest, the frame alive, and the stick not on the table: it is laid again behind the ball,
+        // ready for the next stroke — which cannot be played without it.
+        if controller.cueHandling == .putAway, controller.mode != .simulating,
+           !controller.ballsAreFalling, !controller.isFrameOver {
+            controller.putTheCueBackOnTheTable()
+            requestRefresh()
+        }
+    }
+
+    /// Asks the computer what to do when it is its turn, and does it when the answer comes back.
+    ///
+    /// The deciding happens on another queue — it plays tens of shots out, and the picture has to keep
+    /// being drawn while it does — but everything that touches the frame happens here, on the main thread,
+    /// where the mouse and the keys are also answered.
+    private func giveTheComputerItsTurn() {
+        guard let computer = computerAtTheTable else { return }
+        // Nothing is decided while the new-game question is up, or while a game between two computers is
+        // paused: the question is a pause, and a computer that played on through it would not be one.
+        guard !theGameIsPaused, !controller.isAskingAboutANewGame, !controller.isAskingAboutANewFrame,
+              !controller.isAskingAboutAReRack else { return }
+
+        // A shot that has been lined up is played when its moment comes.
+        if let shot = shotOwed {
+            guard CACurrentMediaTime() >= shotOwedAt else { return }
+            shotOwed = nil
+            // Struck the way the **player** strikes one — a charge, and the cue action it leaves behind —
+            // so that what the computer plays is the stroke the search played out, and the tip's own
+            // contact with the ball is what gives it its speed.
+            controller.playCharged(shot, at: CACurrentMediaTime())
+            wake()
+            requestRefresh()
+            return
+        }
+
+        // While a stroke is running there is nothing to decide, and when the frame is over there never
+        // will be again.
+        guard controller.mode != .simulating, !controller.ballsAreFalling,
+              theComputerIsAtTheTable else { return }
+
+        if let answer {
+            self.answer = nil
+            isThinking = false
+            doIt(answer, as: computer)
+            // A computer that has nothing to do in a position must not be asked about it again the moment
+            // the answer lands: the position has not changed, so neither would the answer, and the frame
+            // loop would ask a hundred times a second for ever.
+            if case .wait = answer { askedAbout = thePositionInShort } else { askedAbout = nil }
+            return
+        }
+
+        guard !isThinking, askedAbout != thePositionInShort else { return }
+        isThinking = true
+        askedAbout = thePositionInShort
+        // The frame the decision is about, held on to: the search reads it and plays its shots out on
+        // copies of it, and nothing moves while it does — the balls are at rest and it is the computer's
+        // turn, so the mouse has nothing to steer and the keys nothing to play.
+        let frame = controller
+        TableScene.thinking.async { [weak self] in
+            let action = computer.nextAction(for: frame)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.answer = action
+                self.wake()
+            }
+        }
+    }
+
+    /// Carries out one of the computer's decisions on the frame it is looking at.
+    private func doIt(_ action: ComputerPlayer.Action, as computer: ComputerPlayer) {
+        guard !controller.isFrameOver,
+              !theGameIsPaused, !controller.isAskingAboutANewGame,
+              controller.game.state.currentPlayer == computer.playerIndex else { return }
+        switch action {
+        case .shoot(let shot):
+            guard controller.canStrike else { return }
+            // The cue is put on the line and the tip on the ball first, and the stroke follows a moment
+            // later: a player is seen to get down and play, rather than the balls going by themselves.
+            controller.aimAngle = shot.angle
+            controller.setSpin(side: shot.side, vertical: shot.vertical)
+            shotOwed = shot
+            shotOwedAt = CACurrentMediaTime() + TableScene.theTurnOfTheCue
+        case .wait:
+            break
+        case .reRack:
+            // Section 3 Rule 17, and the answer to two players fouling at a position neither of them can
+            // make anything of: the frame is racked again rather than played on for ever.
+            controller.reRack()
+        default:
+            // Everything else — a colour, a free ball, where to put the cue ball, what to do after a foul
+            // — is the game's own business and takes no time at all.
+            _ = ComputerMatch.apply(action, to: controller)
+        }
+        wake()
+        requestRefresh()
+    }
 
     /// Something has changed what the screen shows — a key, a click, the mouse while a key is held.
     /// The redraw itself is done **once a frame**, in the frame loop, so a burst of events (a key
@@ -1075,6 +1342,9 @@ final class TableScene: SKScene {
 
     /// The rate the picture is worth now. See `FrameRate`.
     private func wantedFrameRate() -> FrameRate {
+        // The computer thinking, or its cue standing on the ball, is the picture being worth drawing: the
+        // aim is moving and the stroke is coming.
+        if isThinking || shotOwed != nil { return .standing }
         // The shot being played, or the table running: the frame rate that matters.
         if controller.isDownOnTheShot || controller.mode == .simulating || controller.ballsAreFalling
             || controller.isMovingTheCue || !heldWalkKeys.isEmpty || isHoldingWalkKey || isDraggingSpin {
@@ -1117,8 +1387,15 @@ final class TableScene: SKScene {
         // The cue with no room behind the ball says so itself: there is nothing the player can do at
         // the table until they lift the butt, so it is added to the line they are reading.
         if controller.isAskingAboutANewGame {
-            statusLabel.text = "Start a new game? The frames won and every score will be lost."
-                + " Press Esc to carry on."
+            if let mode = modeAwaitingADifficulty {
+                statusLabel.text = "\(mode.rawValue): how hard should the computer be?"
+            } else if theGameIsPaused {
+                statusLabel.text = "Paused. A new game begins from frame 1, with every score lost."
+                    + " Carry on, or choose who plays."
+            } else {
+                statusLabel.text = "A new game? The frames won and every score will be lost."
+                    + " Choose who plays, or press Esc to carry on."
+            }
         } else if controller.isAskingAboutANewFrame {
             statusLabel.text = "Start a new frame? " + controller.whatANewFrameMeans
         } else if controller.isAskingAboutAReRack {
@@ -1346,19 +1623,49 @@ final class TableScene: SKScene {
         // rather than staying on screen for the next shot to be drawn over.
         buttonLayer.removeAllChildren()
         let y = hudBottom - 78
+        // The new-game question puts two rows of buttons up, and the lower of them still has to be on the
+        // screen: the HUD's own bottom is 118 points up, so the rows sit inside it.
+        let firstRow = hudBottom - 52
+        let secondRow = hudBottom - 88
 
         // Starting a new game is confirmed first: it takes the whole match back to the start — the frames
         // won and the frame in progress with them — and Esc is as easy to catch as any other key.
         if controller.isAskingAboutANewGame {
-            addButton(title: "Start a new game", at: CGPoint(x: size.width / 2 - 110, y: y), width: 200) { [weak self] in
-                guard let self else { return }
-                self.controller.startTheNewGame()
-                self.requestRefresh()
+            // The modes **are** the answer to the question: who plays the two seats. A mode with a
+            // computer in it asks one more thing — how hard — and then the game begins.
+            if let mode = modeAwaitingADifficulty {
+                addButton(title: "Easy", at: CGPoint(x: size.width / 2 - 170, y: firstRow), width: 130) { [weak self] in
+                    self?.startNewGame(mode: mode, difficulty: .easy)
+                }
+                addButton(title: "Medium", at: CGPoint(x: size.width / 2, y: firstRow), width: 130) { [weak self] in
+                    self?.startNewGame(mode: mode, difficulty: .medium)
+                }
+                addButton(title: "Hard", at: CGPoint(x: size.width / 2 + 170, y: firstRow), width: 130) { [weak self] in
+                    self?.startNewGame(mode: mode, difficulty: .hard)
+                }
+                addButton(title: "Back", at: CGPoint(x: size.width / 2, y: secondRow), width: 110) { [weak self] in
+                    guard let self else { return }
+                    self.modeAwaitingADifficulty = nil
+                    self.requestRefresh()
+                }
+                return
             }
-            addButton(title: "Keep playing", at: CGPoint(x: size.width / 2 + 110, y: y), width: 170) { [weak self] in
-                guard let self else { return }
-                self.controller.keepPlaying()
-                self.requestRefresh()
+            let spacing = 210.0
+            for (index, mode) in GameMode.allCases.enumerated() {
+                let x = size.width / 2 + (Double(index) - 1) * spacing
+                addButton(title: mode.rawValue, at: CGPoint(x: x, y: firstRow), width: 200) { [weak self] in
+                    guard let self else { return }
+                    if mode.asksForADifficulty {
+                        self.modeAwaitingADifficulty = mode
+                        self.requestRefresh()
+                    } else {
+                        self.startNewGame(mode: mode)
+                    }
+                }
+            }
+            addButton(title: theGameIsPaused ? "Carry on" : "Keep playing",
+                      at: CGPoint(x: size.width / 2, y: secondRow), width: 170) { [weak self] in
+                self?.keepPlaying()
             }
             return
         }
@@ -1581,6 +1888,26 @@ final class TableScene: SKScene {
             lastPointer = location
             return
         }
+        // Somebody else at the table: the mouse is the player's **own head** and not the cue's. They can
+        // walk about it (hold Z), look where they like and duck down over the cloth (X), and none of it
+        // touches the shot the computer is playing — the cue stays where the computer has left it.
+        if theComputerIsAtTheTable {
+            let previous = lastPointer ?? location
+            let travelled = moved ?? CGPoint(x: location.x - previous.x, y: location.y - previous.y)
+            lastPointer = location
+            guard viewMode == .firstPerson, travelled != .zero else { return }
+            if isHoldingWalkKey, !isHoldingCueKey, !isHoldingSpinKey {
+                controller.walk(byForward: Double(travelled.y) * Self.walkMillimetresPerPoint,
+                                sideways: Double(travelled.x) * Self.walkMillimetresPerPoint,
+                                along: watchingYaw)
+            } else {
+                let perPoint = (flags.contains(.shift) ? 0.015 : 0.15) * Double.pi / 180
+                watchingYaw -= Double(travelled.x) * perPoint
+                table3D?.setPitch((table3D?.pitch ?? 0) + Double(travelled.y) * perPoint)
+            }
+            requestRefresh()
+            return
+        }
         // While a key is down the mouse belongs to it — to the tip on the ball, or to the cue — so
         // the aim is left exactly where it was.
         if viewMode == .firstPerson, takeCueControls(at: location, moved: moved, flags: flags) { return }
@@ -1609,7 +1936,7 @@ final class TableScene: SKScene {
         // forward and back along the way they are facing, and across it — and the look is left exactly
         // where it was, which is what walking with your eyes open is. The walk follows the hand: as far as
         // the mouse has moved is as far as the player goes, and it stops when the hand does.
-        if canWalkAbout, isHoldingWalkKey {
+        if thePlayerMayWalkAbout, isHoldingWalkKey {
             if travelled != .zero {
                 controller.walk(byForward: Double(travelled.y) * Self.walkMillimetresPerPoint,
                                 sideways: Double(travelled.x) * Self.walkMillimetresPerPoint)
@@ -1688,11 +2015,18 @@ final class TableScene: SKScene {
     /// down arrows go forward and back along the way they are looking, the left and right arrows across
     /// it. Held keys, read here over the frame's own time, so the walk is smooth.
     private func applyWalking(dt: Double) {
-        guard canWalkAbout, !heldWalkKeys.isEmpty else { return }
+        guard thePlayerMayWalkAbout, !heldWalkKeys.isEmpty else { return }
         let forward = (heldWalkKeys.contains(126) ? 1.0 : 0) - (heldWalkKeys.contains(125) ? 1.0 : 0)
         let sideways = (heldWalkKeys.contains(124) ? 1.0 : 0) - (heldWalkKeys.contains(123) ? 1.0 : 0)
         guard forward != 0 || sideways != 0 else { return }
-        controller.walk(forward: forward, sideways: sideways, over: dt)
+        if controller.isWatching {
+            // The watcher walks along the way **they** are looking, which is not the way the cue points.
+            controller.walk(byForward: forward * PlayerWalk.pace * dt,
+                            sideways: sideways * PlayerWalk.pace * dt,
+                            along: watchingYaw)
+        } else {
+            controller.walk(forward: forward, sideways: sideways, over: dt)
+        }
         requestRefresh()
     }
 
@@ -1962,6 +2296,10 @@ final class TableScene: SKScene {
             return
         }
 
+        // The computer's turn: the table is not the player's to touch. The buttons above still work, so
+        // the game's own questions can be answered by hand if they want to.
+        if theComputerIsAtTheTable { return }
+
         if spinNode.frame.insetBy(dx: -12, dy: -12).contains(location) {
             isDraggingSpin = true
             updateSpin(from: location)
@@ -2053,7 +2391,7 @@ final class TableScene: SKScene {
         // the key, and only the first press does anything.
         if let character = event.charactersIgnoringModifiers?.lowercased(),
            character == "z" || character == "x" {
-            if canWalkAbout, !event.isARepeat {
+            if thePlayerMayWalkAbout, !event.isARepeat {
                 if character == "z" { isHoldingWalkKey = true } else { table3D?.setCrouching(true) }
                 requestRefresh()
             }
@@ -2062,7 +2400,7 @@ final class TableScene: SKScene {
         // Up and about with the cue put away the arrows walk the player about rather than sighting
         // finely: they are held keys, read in the frame loop, so the walk is smooth and does not wait
         // on the keyboard's own repeat.
-        if canWalkAbout, (123...126).contains(Int(event.keyCode)) {
+        if thePlayerMayWalkAbout, (123...126).contains(Int(event.keyCode)) {
             heldWalkKeys.insert(event.keyCode)
             return
         }
@@ -2187,15 +2525,18 @@ final class TableScene: SKScene {
             requestRefresh()
         case "e":
             // Hold E and the mouse moves the tip on the cue ball instead of the aim.
+            guard !controller.isWatching else { break }
             isHoldingSpinKey = true
             requestRefresh()
         case "b":
             // Hold B and the mouse lifts and lowers the cue: with side spin set, a lifted cue strikes
             // down at the ball and the cloth curves the shot into a swerve.
+            guard !controller.isWatching else { break }
             isHoldingElevationKey = true
             requestRefresh()
         case "s":
             // Hold S and the mouse draws the cue back and pushes it through the ball.
+            guard !controller.isWatching else { break }
             if !isHoldingCueKey, controller.beginCueAction() {
                 isHoldingCueKey = true
                 requestRefresh()
@@ -2208,7 +2549,7 @@ final class TableScene: SKScene {
             table3D.use(preset)
             requestRefresh()
         case " ":
-            if !isHoldingSpinKey, !isHoldingCueKey, controller.canStrike {
+            if !isHoldingSpinKey, !isHoldingCueKey, !controller.isWatching, controller.canStrike {
                 controller.beginCharge(at: CACurrentMediaTime())
             }
         case "h":
@@ -2222,18 +2563,10 @@ final class TableScene: SKScene {
             // changes size, which `didChangeSize` sees.
             view?.window?.toggleFullScreen(nil)
         case "\u{1b}":
-            // Esc asks about a new game — clearing the frames won and every score — and Esc again puts
-            // the question away: nothing is thrown away until it is answered with the button.
-            if controller.isAskingAboutANewGame {
-                controller.keepPlaying()
-            } else {
-                // Whatever is in hand goes down first: a cue drawn back or a charge building is not
-                // something to leave half-played under a question.
-                controller.cancelCueAction()
-                isHoldingCueKey = false
-                controller.askToStartANewGame()
-            }
-            requestRefresh()
+            // Esc asks about a new game — clearing the frames won and every score — and Esc again puts the
+            // question away: nothing is thrown away until it is answered with a button. In a game between
+            // two computers it is also the **pause**.
+            escapePressed()
         default:
             // Nothing in the game wanted this key, so it goes on to the responder chain — where the
             // window answers an unhandled key with a beep. Counted so the harness can hold a key the game
@@ -2298,6 +2631,12 @@ final class TableScene: SKScene {
         lastUpdateTime = currentTime
 
         applyWalking(dt: dt)
+        // Whose turn it is decides whether the mouse is the player's own head or the cue's. While the
+        // computer is at the table the player is only watching — and the moment that begins, the watcher
+        // takes up the aim the computer is facing along, so that the view does not jump.
+        let watching = theComputerIsAtTheTable
+        if watching, !controller.isWatching { watchingYaw = controller.aimAngle }
+        controller.isWatching = watching
         controller.updateCharge(at: CACurrentMediaTime())
         // The mouse's travel is handed to the stroke **before** the frame's steps, and the stick is carried by
         // the simulation along with the balls — a step at a time — rather than jumping a frame's worth at
@@ -2314,8 +2653,12 @@ final class TableScene: SKScene {
             controller.letTheBallsFall(dt: dt)
         }
         if viewMode == .firstPerson {
-            table3D?.update(with: controller, dt: dt)
+            table3D?.update(with: controller, dt: dt, watching: controller.isWatching,
+                            lookYaw: watchingYaw)
         }
+        // And the computer's turn, if it is: it is asked what to do, and does it when it has decided.
+        theComputerLooksAfterItsCue()
+        giveTheComputerItsTurn()
         // **Control** is the pointer's own key: a tap takes the pointer into the player's hand and the next
         // tap gives the mouse back to the game. It is read from the modifier state every frame, and not
         // only from a `flagsChanged`, because a modifier on its own has no key event of its own and the

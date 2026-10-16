@@ -3585,7 +3585,10 @@ final class Table3D {
     // MARK: - Per-frame update
 
     /// Brings the scene up to date: balls, cue, aids and the player's eye.
-    func update(with driver: FrameDriver, dt: Double) {
+    /// `watching` is true when somebody else is at the table and the player is only watching: the camera
+    /// then stands over the player's **own** feet and follows their own head, and `lookYaw` is which way
+    /// that head is turned — where the cue is pointing is not the watcher's business.
+    func update(with driver: FrameDriver, dt: Double, watching: Bool = false, lookYaw: Double = 0) {
         captureSurroundingsIfNeeded(with: driver)
         touching = Set(driver.touchingBalls)
         let step = min(max(dt, 1.0 / 240.0), 1.0 / 20.0)
@@ -3605,7 +3608,8 @@ final class Table3D {
         // The aim line and the ghost belong to the cue: with it put away the player is only walking, and
         // there is no shot lined up to draw.
         updateAimingAids(with: driver, aiming: aiming && driver.cueHandling == .laid)
-        updateCamera(with: driver, aiming: aiming, cueBallOnTable: cueBallOnTable, dt: step)
+        updateCamera(with: driver, aiming: aiming, cueBallOnTable: cueBallOnTable, dt: step,
+                     watching: watching, lookYaw: lookYaw)
 
         // A ball on its way into a pocket is fading, and a fade is drawn by the renderer rather than by
         // anything here: it counts as moving until it is done.
@@ -3904,7 +3908,8 @@ final class Table3D {
                                                   axis: simd_float3(0, 1, 0))
     }
 
-    private func updateCamera(with driver: FrameDriver, aiming: Bool, cueBallOnTable: Bool, dt: Double) {
+    private func updateCamera(with driver: FrameDriver, aiming: Bool, cueBallOnTable: Bool, dt: Double,
+                              watching: Bool, lookYaw: Double) {
         // When the player has the cue ball in hand the camera drops back to a standing view of
         // the D, so the whole of it is on screen to click into.
         let placing = driver.mode == .placingCueBall || !cueBallOnTable
@@ -3914,7 +3919,9 @@ final class Table3D {
         // between the two framings rather than snapped between presets: taking the cue up — the S cue
         // action, or holding a charge — brings them down over the shot, and the stroke stands them up
         // again once the balls have stopped.
-        let downOnTheShot = !placing && driver.isDownOnTheShot
+        // A watcher is never down on the shot, whatever the player who *is* at the table is doing with the
+        // cue: the shot being played is not theirs to get down over.
+        let downOnTheShot = !placing && !watching && driver.isDownOnTheShot
         if let held = heldFraming {
             body = held == .sighting ? 1 : 0
         } else {
@@ -3926,7 +3933,7 @@ final class Table3D {
                                                elevation: driver.cueElevation)
 
         let preset: PlayerCamera.Preset = placing ? .standing : upright
-        let yaw = placing ? 0 : driver.aimAngle
+        let yaw = placing ? 0 : (watching ? lookYaw : driver.aimAngle)
         // The gaze the player has chosen, plus however much the body has tilted getting down.
         let pitch = placing
             ? PlayerCamera.Preset.standing.pitch
@@ -3940,7 +3947,7 @@ final class Table3D {
         // Whether the player is down over the shot comes from the body rather than the mode, so a
         // held framing is honoured: it is the body that decides whether the eye may lean in.
         let leaning = body > 0.5
-        let walking = !placing && !leaning && driver.cueHandling == .putAway
+        let walking = !placing && !leaning && (driver.cueHandling == .putAway || watching)
         let eye: Vec2
         let eyeHeight: Double
         if walking {

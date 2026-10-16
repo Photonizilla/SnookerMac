@@ -17,7 +17,7 @@ Open **`Snooker.xcodeproj`**. Three targets:
 |---|---|---|
 | `SnookerCore` | macOS framework | the game logic: vectors, table, physics, rules, frame driver, player camera |
 | `Snooker` | macOS app | the window, the SpriteKit HUD and the SceneKit table; links and embeds `SnookerCore` |
-| `SnookerCoreTests` | unit test bundle | the 233 tests, linked against `SnookerCore` |
+| `SnookerCoreTests` | unit test bundle | the 271 tests, linked against `SnookerCore` |
 
 Press **Run** (`Cmd+R`) to build and launch, **Test** (`Cmd+U`) to run the suite. The
 `Snooker` scheme is shared, so it works from a fresh checkout.
@@ -58,6 +58,7 @@ universal: arm64 and x86_64.
 | Full screen | `F` — the window fills the screen, and `F` again brings it back. The View menu's **Full Screen** is the same switch. The picture re-lays itself out to whatever size the screen is |
 | Walk about | `C` puts the cue away — and lays it on the table again. With the cue **away** the player is only walking about: the **arrow keys** walk them, up and down along the way they are looking and left and right across it, the mouse looks about, and their body is kept clear of the table however hard they walk at it. Hold **`Z`** and the mouse walks them instead — forward and back along the way they are facing, and across it, the look left alone — as far as the hand moves. That works **while the balls run** too: stand up from the shot (release `S`), put the cue away, and you are free to walk around and watch the balls from wherever you like. With the cue **laid** the player stands by the cue and the mouse swings the camera round it, as before |
 | Eye level | `2` standing at the table (the default), `3` raised (`1` stands you up too; the View menu's **Eye Level: On the Shot** is `⌘1`). Getting down over the shot is not a key: hold `S`, or a charge, and the player bends down to the ball. Hold `X` to duck the eye down over the cloth — 150 mm above the bed — and let go to come back up |
+| Watching the computer | While the computer is at the table the mouse is the **player's own head** and not the cue's: move it to look about, hold **`Z`** to walk about the table, hold **`X`** to duck down over the cloth — and the computer plays its shot meanwhile, with its cue left exactly where it put it. The view comes back to the cue the moment it is the player's turn. Nothing of the player's is live while the computer plays — `S`, `E`, `B`, `C` and a click do nothing — because the cue in play is not theirs |
 | Fine aim | Arrow keys (with the cue laid, or down on the shot; with it put away they walk instead), or hold `Shift` and move the mouse |
 | Fine spin | Hold `Shift` with `E` for a quarter of the travel |
 | Fine aim while down | Hold `Shift` with `S`: the mouse goes back to the aim, at the fine setting — across to turn, up and down to raise and lower the gaze — while the cue stays where it was drawn |
@@ -71,7 +72,8 @@ universal: arm64 and x86_64.
 | Concede frame | `Shift`-`C` (plain `C` is the cue, put away or laid on the table, which is the handier key) |
 | Claim the frame | The **Claim the frame** button, when the Black is the only ball left and the **striker** is more than seven ahead (Section 2 Rule 1(b)). They are not made to take it, and it is never taken for them: playing on is their right, and the first pot or foul then ends the frame with the scores deciding it (Rule 4(a)). The **other** half of the rule is not a claim at all — when the Black is the only ball left and the **non-striker** is the one more than seven ahead, the striker needs snookers to win and the frame is **awarded** to the non-striker there and then (Section 2 Rule 1(c)). Nobody presses anything for it: the game notices the position the moment it arises, ends the frame, and counts it for the opponent, with the referee's own line in the log to say why |
 | Cancel a shot | Let go of `S`: the cue goes back to its rest position and the stroke is never played |
-| New game | `Esc`, which asks first — **Start a new game** or **Keep playing** — and `Esc` again puts the question away, exactly as `N` and `R` do, so nothing is thrown away until you say so: no ball moves while it asks, and no stroke can be played over it. Answering it takes the match back to its **first frame**, with the frame count, the frames won and both scores at nothing. Whatever is in hand — a charge, or a cue drawn back — is put down when it asks |
+| New game | `Esc`, which asks first — and the question is **who plays**: **Human vs Human**, **Human vs Computer** or **Computer vs Computer**, and **Keep playing** to put it away, exactly as `N` and `R` do, so nothing is thrown away until you say so: no ball moves while it asks, and no stroke can be played over it. A mode with a computer in it asks one more thing — **Easy**, **Medium** or **Hard** — and then the match goes back to its **first frame**, with the frame count, the frames won and both scores at nothing. Whatever is in hand — a charge, or a cue drawn back — is put down when it asks. The **New Game…** item in the Game menu asks the same question |
+| The computer | Played through the new-game question above: **Human vs Computer** puts it in one of the two seats — drawn at random, so it is not always "Dr. Ker" — and **Computer vs Computer** puts it in both. In a game between two of them, **`Esc` is the pause**: the question comes up and neither of them plays until you carry on. While it is the computer's turn the mouse steers nothing: the cue is put on the line it has chosen, the tip on the ball, and the stroke follows a moment later. See *The computer player* below |
 | Help | `H` opens and closes a panel with the whole of the controls on it, in either view. The game plays on behind it. The screen keeps only the one line of its own: **Press H for help**, in the top left corner, with the view the player is looking through — **3D — standing**, or **Top-down** — in the top right |
 | Sound | `M` mutes the table and `M` again brings it back (the View menu's **Mute Sound** is the same switch). Every contact sounds where it happens and at the volume its own speed earns it: the cue on the ball, ball on ball, a ball on a cushion or a jaw, a ball on the throat of a pocket, a ball coming down on the wood of the rail, and a ball forced off the table landing on the floor. A ball dropping into a pocket is silent |
 
@@ -960,8 +962,11 @@ Honest limitations, kept small on purpose:
   non-standard cue, measuring gaps, conferring with a partner) are not enforced.
 - The size of the nap's sideways push, of spin-induced throw and of cue-ball squirt are
   approximations in the physics, not the published measurements.
-- No AI opponent, no aggregate-points bookkeeping beyond the frames won and the frame number, and no
-  save/load. (The game does have sound — see *Sound* above.)
+- No learned opponent worth the name: there **is** a computer player (see *The computer player* below),
+  and it plays a full frame by itself, but it plays by searching the real physics; the learned value
+  function it can be given (`AI/`) is real and trained and changes its mind, but on the evidence so far it
+  does not play any better than the arithmetic it replaces. No aggregate-points bookkeeping beyond the
+  frames won and the frame number, and no save/load. (The game does have sound — see *Sound* above.)
 
 ## Project layout
 
@@ -974,13 +979,20 @@ Sources/SnookerCore/          framework target: pure logic, no AppKit
   Rules.swift                 the WPBSA rules engine (scoring, fouls, free ball, spotting)
   FrameDriver.swift           stroke pipeline: physics -> events -> adjudication -> next state
   PlayerCamera.swift          where the player's eye is and what it is looking at
+  ShotPlan.swift              the geometry the computer aims by: pots, safeties, escapes
+  ComputerPlayer.swift        the computer player: choosing a stroke, answering the questions
+  ComputerMatch.swift         two computers playing a frame out, headless
 Sources/SnookerApp/           app target: the Mac app
   main.swift                  NSApplication, window, menu, and the two layers of the window
   TableScene.swift            SpriteKit HUD and plan of the table, mouse/keyboard input
   Table3D.swift               SceneKit table, lights, cue, balls and the player's eye
   GameAudio.swift             the sounds: what each contact plays, and the engine that plays it
   Snapshots.swift             offscreen renders and text reports, for checking the 3D view
-Tests/SnookerCoreTests/       test target: 233 tests (85 rules, 69 physics, 67 end-to-end, 12 camera)
+  ComputerOpponent.swift      the headless harness: playing frames, timing them, probing them
+  LearnedValue.swift          the Core ML value function, when there is a model to load
+Tests/SnookerCoreTests/       test target: 271 tests (85 rules, 69 physics, 67 end-to-end, 12 camera,
+                              38 computer player)
+AI/                           how a value function is trained, converted and measured (see its README)
 Scripts/build-app.sh          optional command-line build that assembles build/Snooker.app
 ```
 
@@ -1373,16 +1385,299 @@ owns the authoritative ball layout (positions and spotting).
   balls still on the table stop, and the rules engine gets the ball as one forced off the table and
   applies the foul, the spotting and the in-hand cue ball.
 
+## The computer player
+
+There is a computer player, and it plays a whole frame by itself — both sides, if you like — with no
+window open. It is **not** a learned player: it plays by searching the real physics, and the geometry it
+aims by and the opinions it holds are all in the code where they can be read and argued with. It is the
+baseline a learned player has to be measured against.
+
+It does the two things a player has to do. It **chooses a stroke**, and it **answers the questions** the
+rules ask — which colour is on, whether to take a free ball, where to put the cue ball in hand, and what
+to do after a foul is committed against it (play from where the balls lie, ask the offender to play
+again, or put the balls back). Both are `ComputerPlayer`'s, and neither needs a window.
+
+Choosing a stroke is a small search, and it is built on the one thing this game has that a learned player
+would have to be told: **the physics is exact and it is fast**. The geometry proposes the shots that are
+on — every ball on into every pocket it can reach (`ShotGenerator.pots`, from the ghost ball), a spread
+of safeties off the balls on, and, when nothing can be reached straight, a fan of escapes. Each one is
+then **played out in full on a copy of the frame** by the same physics the game plays with, and the
+position it leaves is judged. Nothing is decided from a model of what a shot would do; the shot is
+played, and what it did is what is judged. The best of them is then tried again on a grid of strengths
+and spins, because the strength the geometry works out is a guess and the physics is the truth — a red
+pot straight up the pocket line is only a shot if the cue ball is screwed back out of the pocket it has
+just filled. Every shot is played out on its own copy on the machine's own cores, so a decision of forty
+shots costs about a tenth of a second rather than four.
+
+What a position is worth is `ComputerPlayer.value(of:result:)`, and it is deliberately one small
+function: the points scored, whether the striker is still at the table, how good the balls on are for
+whoever is next, whether they are snookered, and how tucked up against a cushion the cue ball has been
+left. A foul is worth its penalty and then some. **That function is the thing a learned network is meant
+to replace** — everything around it is the search, and the search does not change.
+
+The arithmetic it aims by is measured off the physics rather than derived: a ball struck at its middle
+slides before it rolls, and the slide costs a good deal more than the cloth's rolling resistance on its
+own, so the constant relating the speed of a stroke to the distance a ball travels
+(`ShotGeometry.clothTravel`) is the one the probe prints. The same is true of the speed a ball needs when
+it arrives at a pocket: a ball that arrives with nothing left dribbles across the mouth and stops in the
+jaws, so a pot is played to arrive with something in hand.
+
+From the command line (the app binary, with no window — the same shape as `--snapshots`):
+
+```bash
+Snooker.app/Contents/MacOS/Snooker --ai-play [frames] [--easy|--hard|--quiet]
+Snooker.app/Contents/MacOS/Snooker --ai-benchmark [shots]
+Snooker.app/Contents/MacOS/Snooker --ai-probe
+Snooker.app/Contents/MacOS/Snooker --ai-roll
+```
+
+- **`--ai-play`** plays frames out, logging every stroke, decision and foul, and ends with the tally:
+  strokes, pots, fouls, misses, points, highest breaks, frames won, shots played out, and what a decision
+  cost in wall clock.
+- **`--ai-benchmark`** times the one thing the search spends its time on: a single shot played out.
+- **`--ai-probe`** takes one position and prints what each of the shots the geometry proposed actually
+  did — the tool for asking why the computer chose what it chose.
+- **`--ai-roll`** measures how far a ball really travels for the speed it is struck at, which is what
+  every estimate in the planner is calibrated against.
+- **`--ai-escape-check`** plays out the escapes the player would have had, and would have had with the
+  planner as it was, at the same positions.
+- **`--ai-cushion`** measures what a cushion really does to a ball that arrives at an angle, which is what
+  the ways round the table are aimed from: this one keeps 88% of the angle at a walking pace and 70% at a
+  hard shot's impact, and it is not a mirror at all.
+
+What it does today, on this machine, over whole frames: it plays a full frame to its end without ever
+getting stuck, it commits **no fouls** — every candidate stroke is played out before one is chosen, and
+a foul is the one thing it will not pick when anything legal is on — it pots about three strokes in four
+from a rack, and it builds breaks of twenty-odd. A decision costs 40 to 60 played-out shots, about
+0.1–0.15 s of wall clock. A given frame is **deterministic**: the same frame played twice is the same
+frame, stroke for stroke, which is what makes the tests worth having and what makes a run of frames a poor
+way to measure variety — positions have to be varied to measure that.
+
+What it plays when it is snookered is where it used to be worst, and `--ai-escape-check` is what found it:
+playing every escape it proposes out with the real physics, **two strokes in five were fouls** — and most
+of those were not positions with nothing to play. Three things were wrong with the shots it proposed, and
+each is now checked rather than hoped for:
+
+- a line that passes within a few millimetres of another ball is a line that will clip it, so an escape
+  has to keep **4 mm clear** of every ball it is not aiming at;
+- a path across the mouth of a pocket is a path the cue ball can drop into — four points and the opponent
+  in hand — so the line has to keep out of the pockets;
+- the thin cuts that were aimed at the edge of a ball, and past it, on spec are gone: a cut aimed past a
+  ball's edge is a shot at whatever is **behind** it. They were the biggest single source of fouls in the
+  candidate list.
+
+On ten hard positions, the escape fouls fell from **61% of escape strokes to 22%**, and the player found
+itself in half as many hopeless places. From a rack, the three difficulties are now ordered the way they
+should be:
+
+| | σ | that potted | fouls per 100 | highest breaks |
+|---|---|---|---|---|
+| Easy | 0.2° | 29% | 8.0 | 7, 8 |
+| Medium | 0.1° | 31% | 6.8 | 12, 9 |
+| Hard | 0.03° | 42% | 3.9 | 18, 15 |
+
+What the check says about the *geometry* is worth reading before believing any single number it prints: it
+plays the escapes the player would have had with the planner as it was, at the same positions, and reports
+both. Two earlier attempts to find more ways out — checking cushion routes rather than aiming at them
+blind, and playing twice as many of them out — each changed the answer at **three** decisions out of 286,
+while the single-run figure for "nothing legal on offer" moved from 28% to 44% between two runs of the same
+build. What mattered was not finding *more* shots but proposing *better* ones. (And the figure itself was
+measuring the wrong thing until recently: it asked whether a candidate would *reach* a ball on, when what
+matters is whether the stroke **ends without a foul** — a shot can meet a ball on and still put the cue
+ball in a pocket. Asked properly, 92% of the positions the player escapes from have a legal answer in the
+candidate list.)
+
+### A cue action that misses now and then
+
+### Thinking three shots ahead
+
+**It strikes the ball the way a player does.** A shot is played through the same cue action the mouse
+button and the space bar play — a charge, and the script behind it: the pull-back, the pause, the cue's own
+run through the ball, and the follow-through. The ball is given no speed by the caller at all: the **cue's**
+speed gives it one, through the tip's contact, which is where the cost of an off-centre strike comes from.
+The computer's search plays its candidates out the same way, so what it judges is what will happen.
+
+Two consequences fall out of that, and both are the game's own physics rather than new rules. A shot struck
+off centre is a **slower** ball than the same cue speed struck plain, so a player who wants the black with
+screw has to hit it harder — which is why the shot's own tuning tries the spins and the lift **before** the
+strength. And the strength a charge can reach is capped by the **room behind the ball**: a cue that cannot
+be drawn back far is a gentle shot (Rule 11's own "one continuous stroke" has nothing to say about it, but
+the game's `maximumCueDraw` does). From the baulk cushion the cap bit at about a quarter power in one
+position measured — which is exactly what a player finds when they cannot get their cue back.
+
+**And it takes the cue up when a ball comes back at it.** The stick is on the table while the balls run, and
+a ball that reaches it is a ball met with the player's own equipment — a foul (Rule 11(b)(vi)) — so the
+computer watches the balls' own velocities a second ahead (`FrameDriver.aBallIsHeadingForTheCue`) and takes
+the cue off the table in time, laying it again for its next stroke. The search's own play-outs put the cue
+away as soon as the shot is struck, so the two agree about it either way.
+
+One shot and where it leaves the balls is a player that pots; a player that **builds breaks** has to know
+where the balls will be *after the next one*, and the next. `ComputerPlayer.depth` is how many of its own
+shots it plays out ahead — three by default — and the search is a **beam** over the lines rather than a
+tree over the shots, because three plies of the whole candidate list is the product of the counts at each
+of them.
+
+A line is a shot played out with the real physics and, if the player is still at the table, the best line
+from there one ply shorter; the turn passing ends it and the position is judged as the opponent's. That is
+what makes it break-building rather than depth for its own sake: only the lines where the ball went in are
+followed. The best few shots at the top of the tree are also **tuned** — the strength, the vertical spin,
+the side spin and the lift of the cue, one at a time, with the physics as the judge and each variant
+played with its shot's own draw of the aim error. Deeper lists are cut to a quarter, so a decision at
+Medium plays about sixty shots out and costs about a third of a second.
+
+The judgement it plays out *to* had one thing missing for break-building, and it is now in: the value of a
+position depends on **which** ball is on, not only how easy it is. Being on the black with a pot is a
+different position from the same pot on the yellow, which is what a break is made of.
+
+What it is worth, measured over twelve hard positions played out at each depth — points a visit, and the
+longest break in the run:
+
+| depth | points a visit | longest break |
+|---|---|---|
+| 1 | 1.03 | 20 |
+| 2 | 1.12 | 16 |
+| 3 | 1.20 | 17 |
+
+And measured the way the rest of this project measures things, playing each position twice with only the
+depth changed, the depths are within the noise of one another (+0.06 ± 0.41 points a visit for one ply
+against two; −0.23 ± 0.41 for one against three) and they choose the same first shot about six times in
+ten. From a position thrown together at random most visits are one or two shots, so the first visit is
+dominated by whether the first pot goes in — which every depth agrees about. Where three plies should pay
+is over a **break**, and the run of frames that came with the ball-value term above had the longest break
+of the session, 24.
+
+The computer's cue is deliberately **not exact**. Every shot it plays is struck with the aim a little off
+the line — a normal error, N(0, σ) — and **the same error is applied to every shot it plays out while it is
+deciding**. The second part is what makes it play safe rather than merely miss: the search sees the misses
+before it chooses, so a pot that only goes in off a perfect line is worth less to it than one with margin.
+
+σ is the player's cue action and most of what a difficulty *is*: **Easy 0.2°, Medium 0.1°, Hard 0.03°**,
+set in `ComputerPlayer.Difficulty.aimErrorDegrees` — how long it thinks being the smaller half of the
+difference between them. Three frames apiece from a rack:
+
+| | σ | strokes | that potted | fouls per 100 | highest breaks |
+|---|---|---|---|---|---|
+| Easy | 0.2° | 220 | 28% | 7.7 | 11, 9 |
+| Medium | 0.1° | 239 | 32% | 3.8 | 16, 8 |
+| Hard | 0.03° | 204 | 40% | 7.8 | 15, 11 |
+
+Measured over 25 random positions, with the same errors drawn for both players (`--ai-choices`), and with
+the strokes that potted from `--ai-measure` over 30:
+
+| σ | strokes that potted | decisions the error turned … safer : braver |
+|---|---|---|
+| 0° | 40% | — |
+| 0.15° | 36% | 87 : 70 |
+| 0.3° | 26% | 163 : 82 |
+| 0.6° | — | 337 : 125 |
+
+"Safer" is the fallible player playing a safety or an escape where the exact player would have gone for a
+pot, and "braver" the other way round. So the error does both of the things it is for, and the more of it
+there is the more the second one shows — while the choice itself is unchanged in about nine decisions out
+of ten, because a decision is usually not that close.
+
+`--ai-error <degrees>` plays the run with a cue action of its own instead of the difficulty's, and `0` is a
+cue action that never misses: what the tests play, and what the numbers elsewhere in this file were
+measured with.
+
+The size of the error matters more than it looks. From a rack, with the search set to `--medium`: at σ = 0°
+the player pots three strokes in four and its highest breaks are 22 and 23; at σ = 0.15° it commits six
+fouls a hundred strokes and its highest breaks are 8. A tenth of a degree of aim is the difference between
+a break-builder and a club player, which is why the number the error is set to should be the one you want
+the player to *feel* like rather than the smallest one that looks reasonable.
+
+And a fallible search can be led astray by a **lucky draw**: every candidate is played out once, with one
+error on it, and a thin contact that reached on that one draw looks exactly like a shot that always
+reaches. The search then picks shots on the strength of luck they will not have twice, which is why an
+*accurate* computer used to foul more than a sloppy one. Part of it is fixed — a candidate and the
+strengths and spins it is tried with now share **one** draw, so what separates them is the shot and not
+the luck — and part of it is still there: the shots compared against each other still have a draw apiece.
+
+### Playing against it
+
+The computer asks for the frame to be **re-racked** itself when it has been fouling at the same position
+for half a dozen decisions (Section 3 Rule 17). Without that, two computers that cannot make anything of a
+position foul at each other for ever: a Hard frame was once measured at 1,015 strokes and 905 fouls before
+it stopped.
+
+**Esc** (or **Game ▸ New Game…**) asks the new-game question, and the answer to it is **who plays**: two
+people, a person and the computer, or the computer against itself. Choosing a mode with a computer in it
+asks one more thing — Easy, Medium or Hard, which is the cue action it plays with *and* how many shots it
+plays out before choosing one — and then the match goes back to its first frame.
+
+In **Human vs Computer** the computer's seat is drawn at random, so it is as likely to be "Prof. Snoo" as
+"Dr. Ker". In **Computer vs Computer** there is nobody at the table, so **`Esc` is the pause**: the
+question comes up where the game stood, neither computer plays, and **Carry on** lets them go again.
+
+And while either kind of computer plays the player is free to **watch it from wherever they like**: the
+mouse is their own head rather than the cue's — look about with it, hold **`Z`** to walk about the table,
+hold **`X`** to duck down over the cloth — and the computer's cue stays exactly where the computer left it
+and strikes in its own time. Taking that up steps the player's feet back out of the table's own clearance,
+which is what the walk needs before it will move at all.
+
+While it is the computer's turn the mouse does not steer anything: the cue is put on the line it has
+chosen, the tip on the ball, and the stroke follows a moment later, so it is seen to get down and play
+rather than the balls simply going. The deciding happens on another thread — it is playing shots out, and
+the picture has to keep being drawn while it does — and everything that touches the frame happens on the
+main thread where the mouse and the keys are also answered. Filling **both** seats (which the command
+line's `--computer-check --both` does) leaves the game playing itself.
+
+What that looks like from the command line, with no window:
+
+```bash
+Snooker.app/Contents/MacOS/Snooker --computer-check [--easy] [--both]
+Snooker.app/Contents/MacOS/Snooker --ui-check
+```
+
+which drives the window's own scene, with the computer at the table and no window open, and reports what
+happened. It is the one piece of the player the core's tests cannot reach, and it is how the integration
+is checked: the last run played eighteen strokes of a frame, both seats by computer, and reached 21–8.
+
+`--ui-check` drives the same scene through the **new-game question**: that the three modes put the right
+number of computers in the right seats, that the seat a human game gives the computer is drawn rather
+than fixed, that the difficulty chosen is the one that plays, and that `Esc` pauses a game between two
+computers and that nothing is played while it is paused.
+
+What it is not, yet: it has no picture of a shot's *position play* beyond one ply of the same geometry,
+and no policy of its own — the shots are proposed by the geometry, not by anything learned. Both are what
+a value **and policy** network would bring. The value half has been built; see below.
+
+### Judging a position with a learned network
+
+That judgement — `ComputerPlayer.value(of:result:)` — is the one place in the player where a learned model
+belongs, and there is a pipeline for one in `AI/`: positions are generated and played out headless
+(`--ai-export`), a small network is trained on them (in Python, with PyTorch), converted to Core ML
+(`--ai-model-plan` says where Core ML would run it), and played against the arithmetic it is meant to
+replace (`--ai-compare` plays each position twice, once with each, and reports the difference within each
+position — the game is deterministic but not stable, so only a paired comparison means anything).
+
+**It does not change how the player plays.** Held out from training it is the better judge of the two: it
+predicts the points scored from a position with a mean error of 1.85 against 2.41 for the player's own
+arithmetic, and it ranks positions with a correlation of +0.444 against +0.416. But over 240 random
+positions, each played twice, playing with it is level with playing without it (−0.07 points a visit,
+standard error 0.17), and it changes the player's mind in only about one position in fifteen. The reason is
+that judging was not what the player was short of: where its search cannot propose a legal stroke it fouls
+whatever the value function says.
+
+It also turns out not to use the Neural Engine at all: Core ML's own compute plan puts every version of
+this network on the CPU, including a much larger one and a convolutional one, because at this size the CPU
+is the better bet. All of that, with the numbers, is in `AI/README.md`.
+
+Nothing about the game depends on the network: with no model loaded the player is exactly what it was, and
+the search, the physics and the rules are untouched either way.
+
 ## Tests
 
 ```bash
 xcodebuild -project Snooker.xcodeproj -scheme Snooker -destination 'platform=macOS' test
 ```
 
-or press `Cmd+U` in Xcode. 233 tests: the rules tests build situations directly (for example
+or press `Cmd+U` in Xcode. 271 tests: the rules tests build situations directly (for example
 "Black is the only ball left, so the first pot ends the frame"), the end-to-end tests place
-the cue ball, aim, shoot, run the simulation and check the adjudication, and the camera
-tests check where the player's eye ends up and where it is looking.
+the cue ball, aim, shoot, run the simulation and check the adjudication, the camera tests
+check where the player's eye ends up and where it is looking, and the computer player's
+tests check the geometry it aims by, the strokes it picks, the questions it answers, and
+that a frame played out with nobody at the table reaches its end.
 
 ### Checking the 3D view without a screen
 

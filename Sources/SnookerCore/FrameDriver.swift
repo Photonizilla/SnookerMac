@@ -124,6 +124,25 @@ public final class FrameDriver {
     /// the cue; putting it away lets them walk.
     public private(set) var cueHandling: CueHandling = .laid
 
+    /// True while the player is **watching** rather than playing: somebody else is at the table, so the
+    /// cue is not theirs to steer and their feet are their own.
+    ///
+    /// It is the one thing the cue's own handling cannot say. A player who is watching stands where they
+    /// like and looks where they like, exactly as one who has put the cue away does — but the cue **stays
+    /// laid**, because it is the other player's and they are about to strike with it. Set by whoever knows
+    /// whose turn it is; the game itself takes no view.
+    public var isWatching = false {
+        didSet {
+            // The watcher's feet come clear of the table as they take it up. The walk keeps the player's
+            // body clear of the wood and **does nothing at all** while it is not clear already, so a player
+            // whose feet are inside the margin cannot take a step in any direction — and the place a
+            // player starts from is a stand-off from the ball, which is inside it. Putting the cue away
+            // pushes them clear (`clearOfTheTable`); this is the same step back, taken when the player
+            // stops being at the table and starts watching from it.
+            if isWatching, !oldValue { walkingPosition = PlayerWalk.clearOfTheTable(walkingPosition) }
+        }
+    }
+
     /// Where the player's feet are when the cue is put away and they are walking about.
     private var walkingPosition = Vec2(Table.baulkLineX - PlayerCamera.Preset.standing.standOff,
                                        Table.centreY)
@@ -132,7 +151,10 @@ public final class FrameDriver {
     /// laid it is on the line of the cue, standing the standing stand-off back from the ball — and no
     /// closer to the table than their body allows, so shooting across the table they stand right at it.
     public var playerPosition: Vec2 {
-        guard cueHandling == .laid, let cue = cueBall, cue.onTable else { return walkingPosition }
+        // A player who is watching is not standing at the cue, whatever the cue is doing.
+        guard cueHandling == .laid, !isWatching, let cue = cueBall, cue.onTable else {
+            return walkingPosition
+        }
         let away = Vec2(-cos(aimAngle), -sin(aimAngle))
         let standOff = max(PlayerCamera.Preset.standing.standOff,
                            PlayerWalk.clearStandOff(from: cue.position, away: away))
@@ -155,16 +177,34 @@ public final class FrameDriver {
     /// above. Nothing happens while the cue is laid: the player stands by the cue then, and the camera
     /// comes round it instead.
     public func walk(byForward forward: Double, sideways: Double) {
-        guard cueHandling == .putAway else { return }
+        walk(byForward: forward, sideways: sideways, along: aimAngle)
+    }
+
+    /// The same, with the **way the walker is facing** given outright: the aim while they are at the
+    /// table, and their own head while they are only watching — a spectator looking at the table from the
+    /// side walks towards what they are looking at.
+    public func walk(byForward forward: Double, sideways: Double, along yaw: Double) {
+        guard cueHandling == .putAway || isWatching else { return }
         walkingPosition = PlayerWalk.step(from: walkingPosition,
                                           forward: forward,
                                           sideways: sideways,
-                                          yaw: aimAngle)
+                                          yaw: yaw)
     }
 
     /// The `C` key: puts the cue away so that the player may walk about, or lays it on the table,
     /// pointing from where they stand at the cue ball.
     public func toggleCueHandling() {
+        // The cue is not the watcher's to put away: it is the other player's, and they are about to strike
+        // with it.
+        guard !isWatching else { return }
+        switch cueHandling {
+        case .putAway: layTheCueOnTheTable()
+        case .laid: putTheCueAway()
+        }
+    }
+
+    /// Lays it on the table, pointing from where the player stands to the cue ball.
+    private func layTheCueOnTheTable() {
         switch cueHandling {
         case .putAway:
             // Lay it along the line from where the player stands to the ball, so it points at the ball.
@@ -180,17 +220,72 @@ public final class FrameDriver {
                 placeTheCueAfterTheStrike(of: cue, at: 0)
             }
         case .laid:
-            // Put it away: the player **stands up** with it — you cannot be down on the shot without a
-            // cue — and then walks on from where they were standing. That is what frees them to look
-            // about and walk around while the balls run, if they want to watch them from elsewhere.
-            // Standing up on its own leaves the stick on the table (see `standUp`), so it is *this* that
-            // takes it off: with the cue in the player's hands there is nothing for a ball to meet.
+            break
+        }
+    }
+
+    /// Takes it off the table: the player **stands up** with it — you cannot be down on the shot without
+    /// a cue — and then walks on from where they were standing. That is what frees them to look about and
+    /// walk around while the balls run, if they want to watch them from elsewhere. Standing up on its own
+    /// leaves the stick on the table (see `standUp`), so it is *this* that takes it off: with the cue in
+    /// the player's hands there is nothing for a ball to meet.
+    private func putTheCueAway() {
+        switch cueHandling {
+        case .putAway:
+            break
+        case .laid:
             let whereTheyWere = playerPosition
             standUp()
             world.cue = nil
             walkingPosition = PlayerWalk.clearOfTheTable(whereTheyWere)
             cueHandling = .putAway
         }
+    }
+
+    /// Whether a ball is on its way to the cue: the stick is on the table while the balls run, and a ball
+    /// that reaches it is a ball met with the player's own equipment, which is a foul (Rule 11(b)(vi)).
+    ///
+    /// A player sees it coming and takes the cue up. The question is asked of the balls' own velocities, a
+    /// second ahead: a ball whose line carries it into the stick, soon, counts — and one rolling away from
+    /// it never does, however close it is.
+    public var aBallIsHeadingForTheCue: Bool {
+        guard let cue = world.cue else { return false }
+        let from = Vec2(cue.tip.x, cue.tip.y)
+        let along = Vec2(cue.axis.x, cue.axis.y).normalized
+        guard along.length > 0 else { return false }
+        let matter = 0.7 * 1000      // a ball's speed below which nothing is going anywhere
+        for ball in world.balls where ball.onTable && ball.id != BallID.cue {
+            let speed = ball.velocity.length
+            guard speed > matter else { continue }
+            // Where the ball would meet the stick: the nearest point of it to the ball's line, and how
+            // long the ball takes to get there.
+            let toTheBall = ball.position - from
+            let alongTheCue = min(Table.cueLength, max(0, toTheBall.dot(along)))
+            let nearestOnTheCue = from + along * alongTheCue
+            let toTheCue = nearestOnTheCue - ball.position
+            let distance = toTheCue.length
+            let closing = toTheCue.normalized.dot(ball.velocity.normalized)
+            guard closing > 0.2 else { continue }        // rolling away across it, not into it
+            let gap = distance - (Table.ballRadius + Table.cueTipRadius)
+            guard gap < 400 else { continue }            // in the region, not across the room
+            if gap / speed < 1.0 { return true }         // and less than a second of it left
+        }
+        return false
+    }
+
+    /// Takes the cue off the table, if it is on it, and leaves it off: what a player does when a ball is
+    /// coming back at the stick. Laying it again is `toggleCueHandling`, and the player's own business.
+    public func takeTheCueOffTheTable() {
+        guard cueHandling == .laid else { return }
+        // The same as the `C` key's put-away, but not gated on whose cue it is: whoever struck — a hand or
+        // the computer — the stick is theirs to take up out of the way of a ball.
+        putTheCueAway()
+    }
+
+    /// And the other way: the stick laid down behind the ball again, ready for the next stroke.
+    public func putTheCueBackOnTheTable() {
+        guard cueHandling == .putAway else { return }
+        layTheCueOnTheTable()
     }
 
     // Feedback
@@ -253,6 +348,20 @@ public final class FrameDriver {
         // The balls have moved, so what is behind the cue ball has changed with them: settle the cue
         // where it can be laid before anything reads it.
         settleTheCue()
+    }
+
+    /// Puts the frame into a position: the rules engine's own state, the world rebuilt from it, and the
+    /// mode settled to whatever the position asks for — a stroke to play, a cue ball to place, a question
+    /// to answer, or a frame that is over.
+    ///
+    /// This is how a position is set up **without being played up to**: the tests build their situations
+    /// with it, and so does the computer player's harness, which needs a frame that is really in the
+    /// position it generated rather than one that merely looks like it.
+    public func load(_ state: GameState) {
+        game.withState { $0 = state }
+        syncWorldFromState()
+        decideNextMode()
+        commentary = game.state.commentary
     }
 
     private func writePhysicsPositionsIntoState() {
@@ -707,7 +816,43 @@ public final class FrameDriver {
         guard mode == .charging, let start = chargeStart else { return }
         // A charge is drawn back in proportion to its power, so the room behind the ball caps what the
         // cue can be charged to: a shot with the cue ball up against a cushion is a soft one.
-        power = min(maximumChargePower, FrameDriver.minimumChargePower + (time - start) / 1.1)
+        power = min(maximumChargePower,
+                    FrameDriver.minimumChargePower + (time - start) / FrameDriver.chargeSecondsPerPower)
+    }
+
+    /// Plays a shot the way a **player** plays one: a charge, and the cue action it leaves behind —
+    /// the pull-back, the tip's own contact with the ball, and the follow-through.
+    ///
+    /// The ball is not given a speed here at all. The **cue's own speed** gives it one, through the tip's
+    /// contact, which is where the cost of an off-centre strike comes from (`ballSpeed`): the same stroke
+    /// the mouse button and the space bar play, and the same physics of the contact, whether a hand or the
+    /// computer is holding the cue. The frame's own drive of the stroke finishes it — `updateCharge` while
+    /// the cue is on its way, and the simulation once the ball is away — so a caller that plays the shot
+    /// out itself should use `runStrokeToRest`.
+    ///
+    /// The meter is a clock, and a caller with no clock of its own — a search playing forty shots out —
+    /// would have to wait it out. Instead the charge is built in one step, to the strength the shot asks
+    /// for: the time it would have taken is a figure of the meter and not of the stroke.
+    @discardableResult
+    public func playCharged(_ shot: Shot, at time: TimeInterval) -> Bool {
+        aimAngle = shot.angle
+        spinSide = shot.side
+        spinVertical = shot.vertical
+        // The cue cannot be laid flatter than the player's own stance, so a "level" stroke is the
+        // stance's angle and not 0: see `PhysicsWorld.cueLean`.
+        cueElevation = PhysicsWorld.cueLean(at: shot.elevation)
+        // And where it does not fit, the game settles it — the butt up, and the tip up the ball's face if
+        // it must — which is what it does for a hand as well: a charge cannot be taken with no room behind
+        // the ball, and a cue that is standing up strikes the ball differently, as it should.
+        settleTheCue()
+        beginCharge(at: time)
+        // No room behind the ball, or the frame will not have a stroke at all: nothing was played.
+        guard mode == .charging else { return false }
+        let wanted = min(maximumChargePower, max(FrameDriver.minimumChargePower, shot.power))
+        updateCharge(at: time + (wanted - FrameDriver.minimumChargePower)
+                     * FrameDriver.chargeSecondsPerPower)
+        releaseShot()
+        return mode == .charging && theChargedStroke != nil
     }
 
     /// When the charge was last ticked, so `updateCharge(at:)` can read the frame's own time out of it.
@@ -884,6 +1029,10 @@ public final class FrameDriver {
     /// The least a **charge** can be set to, as a fraction of full power: the meter starts here and fills
     /// from it, and the room behind the ball can hold it below even this.
     public static let minimumChargePower: Double = 0.05
+
+    /// How long a charge takes to build, in seconds a unit of power: the meter the mouse button and the
+    /// space bar fill, and the clock the charge is measured against.
+    public static let chargeSecondsPerPower: Double = 1.1
 
     /// The shortest follow-through a **charged** shot is given, in millimetres. A charged shot's
     /// follow-through is the shot's own and not the hand's — see `chargedFollowThroughLength(of:)` — and
@@ -1535,9 +1684,12 @@ public final class FrameDriver {
     public func runStrokeToRest(maxSeconds: Double = 30) {
         var elapsed = 0.0
         // A **charged** shot is played by the cue action the charge leaves behind, and the shot is not away
-        // until that action has brought the cue through the ball: the runner drives it to the strike before
-        // it takes the stick off the table. Its own clock is the frame's, run on from the last tick it had.
-        while theChargedStroke != nil, elapsed < maxSeconds {
+        // until that action has brought the cue through the ball: the runner drives it to the strike, and
+        // the strike is what turns the frame over to the balls. So the loop runs while the frame is
+        // **charging** and stops the moment it is simulating — a cue still following through after the ball
+        // has gone is a cue the simulation is carrying, and not a shot still to come. Its own clock is the
+        // frame's, run on from the last tick it had.
+        while mode == .charging, elapsed < maxSeconds {
             elapsed += 1.0 / 120.0
             updateCharge(at: (lastChargeTick ?? elapsed) + 1.0 / 120.0)
         }

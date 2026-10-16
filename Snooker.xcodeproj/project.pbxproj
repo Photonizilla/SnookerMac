@@ -28,6 +28,14 @@
 		1A2B3C4D5E6F000000000071 /* PhysicsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000031 /* PhysicsTests.swift */; };
 		1A2B3C4D5E6F000000000072 /* FrameDriverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000032 /* FrameDriverTests.swift */; };
 		1A2B3C4D5E6F000000000073 /* PlayerCameraTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000033 /* PlayerCameraTests.swift */; };
+		1A2B3C4D5E6F000000000056 /* ShotPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000016 /* ShotPlan.swift */; };
+		1A2B3C4D5E6F000000000057 /* ComputerPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000017 /* ComputerPlayer.swift */; };
+		1A2B3C4D5E6F000000000058 /* ComputerMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000018 /* ComputerMatch.swift */; };
+		1A2B3C4D5E6F00000000006B /* ComputerOpponent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F00000000001A /* ComputerOpponent.swift */; };
+		1A2B3C4D5E6F00000000006C /* LearnedValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F00000000001D /* LearnedValue.swift */; };
+		1A2B3C4D5E6F000000000074 /* ComputerPlayerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000034 /* ComputerPlayerTests.swift */; };
+		1A2B3C4D5E6F000000000059 /* PositionFeatures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F00000000001B /* PositionFeatures.swift */; };
+		1A2B3C4D5E6F00000000005A /* PositionGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F00000000001C /* PositionGenerator.swift */; };
 		1A2B3C4D5E6F000000000080 /* SnookerCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000040 /* SnookerCore.framework */; };
 		1A2B3C4D5E6F000000000081 /* SnookerCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000040 /* SnookerCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		1A2B3C4D5E6F000000000082 /* SnookerCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F000000000040 /* SnookerCore.framework */; };
@@ -71,6 +79,14 @@
 		1A2B3C4D5E6F000000000013 /* Rules.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Rules.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F000000000014 /* FrameDriver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameDriver.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F000000000015 /* PlayerCamera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerCamera.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000016 /* ShotPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShotPlan.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000017 /* ComputerPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerPlayer.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000018 /* ComputerMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerMatch.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F00000000001A /* ComputerOpponent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerOpponent.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F00000000001D /* LearnedValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LearnedValue.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F000000000034 /* ComputerPlayerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputerPlayerTests.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F00000000001B /* PositionFeatures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PositionFeatures.swift; sourceTree = "<group>"; };
+		1A2B3C4D5E6F00000000001C /* PositionGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PositionGenerator.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F000000000020 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F000000000021 /* TableScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TableScene.swift; sourceTree = "<group>"; };
 		1A2B3C4D5E6F000000000022 /* Table3D.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Table3D.swift; sourceTree = "<group>"; };
@@ -147,6 +163,11 @@
 				1A2B3C4D5E6F000000000013 /* Rules.swift */,
 				1A2B3C4D5E6F000000000014 /* FrameDriver.swift */,
 				1A2B3C4D5E6F000000000015 /* PlayerCamera.swift */,
+				1A2B3C4D5E6F000000000016 /* ShotPlan.swift */,
+				1A2B3C4D5E6F000000000017 /* ComputerPlayer.swift */,
+				1A2B3C4D5E6F000000000018 /* ComputerMatch.swift */,
+				1A2B3C4D5E6F00000000001B /* PositionFeatures.swift */,
+				1A2B3C4D5E6F00000000001C /* PositionGenerator.swift */,
 			);
 			path = Sources/SnookerCore;
 			sourceTree = "<group>";
@@ -159,6 +180,8 @@
 				1A2B3C4D5E6F000000000022 /* Table3D.swift */,
 				1A2B3C4D5E6F000000000023 /* Snapshots.swift */,
 				1A2B3C4D5E6F000000000024 /* GameAudio.swift */,
+				1A2B3C4D5E6F00000000001A /* ComputerOpponent.swift */,
+				1A2B3C4D5E6F00000000001D /* LearnedValue.swift */,
 				1A2B3C4D5E6F000000000007 /* Resources */,
 			);
 			path = Sources/SnookerApp;
@@ -184,6 +207,7 @@
 				1A2B3C4D5E6F000000000031 /* PhysicsTests.swift */,
 				1A2B3C4D5E6F000000000032 /* FrameDriverTests.swift */,
 				1A2B3C4D5E6F000000000033 /* PlayerCameraTests.swift */,
+				1A2B3C4D5E6F000000000034 /* ComputerPlayerTests.swift */,
 			);
 			path = Tests/SnookerCoreTests;
 			sourceTree = "<group>";
@@ -311,6 +335,11 @@
 				1A2B3C4D5E6F000000000053 /* Rules.swift in Sources */,
 				1A2B3C4D5E6F000000000054 /* FrameDriver.swift in Sources */,
 				1A2B3C4D5E6F000000000055 /* PlayerCamera.swift in Sources */,
+				1A2B3C4D5E6F000000000056 /* ShotPlan.swift in Sources */,
+				1A2B3C4D5E6F000000000057 /* ComputerPlayer.swift in Sources */,
+				1A2B3C4D5E6F000000000058 /* ComputerMatch.swift in Sources */,
+				1A2B3C4D5E6F000000000059 /* PositionFeatures.swift in Sources */,
+				1A2B3C4D5E6F00000000005A /* PositionGenerator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -323,6 +352,8 @@
 				1A2B3C4D5E6F000000000062 /* Table3D.swift in Sources */,
 				1A2B3C4D5E6F000000000063 /* Snapshots.swift in Sources */,
 				1A2B3C4D5E6F000000000064 /* GameAudio.swift in Sources */,
+				1A2B3C4D5E6F00000000006B /* ComputerOpponent.swift in Sources */,
+				1A2B3C4D5E6F00000000006C /* LearnedValue.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -334,6 +365,7 @@
 				1A2B3C4D5E6F000000000071 /* PhysicsTests.swift in Sources */,
 				1A2B3C4D5E6F000000000072 /* FrameDriverTests.swift in Sources */,
 				1A2B3C4D5E6F000000000073 /* PlayerCameraTests.swift in Sources */,
+				1A2B3C4D5E6F000000000074 /* ComputerPlayerTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

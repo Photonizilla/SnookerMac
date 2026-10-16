@@ -97,6 +97,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let concedeItem = gameMenu.addItem(withTitle: "Concede Frame", action: #selector(concede), keyEquivalent: "c")
         concedeItem.keyEquivalentModifierMask = [.shift]
         gameMenu.addItem(withTitle: "Claim the Frame", action: #selector(claimTheFrame), keyEquivalent: "")
+        gameMenu.addItem(.separator())
+        // Who plays the two seats is the question **New Game** asks (Esc asks it too), so there is nothing
+        // to set here: the modes and the difficulty are on the question's own buttons.
         gameItem.submenu = gameMenu
 
         let viewItem = NSMenuItem()
@@ -157,6 +160,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc private func concede() { scene?.controller.concede(); scene?.refresh(force: true) }
     @objc private func claimTheFrame() { scene?.controller.claimTheFrame(); scene?.refresh(force: true) }
 
+
     @objc private func showPlayerView() { scene?.setViewMode(.firstPerson) }
     @objc private func showTopDownView() { scene?.setViewMode(.topDown) }
     @objc private func eyeOnTheShot() { useEyeLevel(.sighting) }
@@ -182,6 +186,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         table3D?.use(preset)
         scene?.refresh(force: true)
     }
+}
+
+// The computer player, played headless: two computers play whole frames with no window open, which is
+// how the player is measured before there is anything to watch. `--ai-play [frames]` plays frames and
+// logs them; `--ai-benchmark [shots]` reports what one decision costs. `--easy` and `--hard` set the
+// strength, and `--quiet` leaves only the tally.
+if let index = CommandLine.arguments.firstIndex(of: "--ai-play") {
+    let count = CommandLine.arguments.count > index + 1
+        ? Int(CommandLine.arguments[index + 1]) ?? 1 : 1
+    exit(ComputerOpponent.playFrames(count, options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+if let index = CommandLine.arguments.firstIndex(of: "--ai-benchmark") {
+    let count = CommandLine.arguments.count > index + 1
+        ? Int(CommandLine.arguments[index + 1]) ?? 200 : 200
+    exit(ComputerOpponent.benchmark(shots: count))
+}
+
+if CommandLine.arguments.contains("--ai-probe") {
+    exit(ComputerOpponent.probe())
+}
+
+if CommandLine.arguments.contains("--ai-roll") {
+    exit(ComputerOpponent.roll())
+}
+
+// Positions, and what they are for: `--ai-export` writes what a player scored from each of a set of
+// random positions, for a network to be trained on; `--ai-measure` says what the player did with them,
+// which is the benchmark any change to the player is measured against.
+if let index = CommandLine.arguments.firstIndex(of: "--ai-export") {
+    guard CommandLine.arguments.count > index + 1,
+          !CommandLine.arguments[index + 1].hasPrefix("--") else {
+        print("--ai-export needs a path to write to")
+        exit(2)
+    }
+    exit(ComputerOpponent.export(path: CommandLine.arguments[index + 1],
+                                 options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+if CommandLine.arguments.contains("--ai-measure") {
+    exit(ComputerOpponent.measure(options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+if CommandLine.arguments.contains("--ai-escape-check") {
+    exit(ComputerOpponent.escapeCheck(options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+// What the aim error does to the computer's *choices*, as opposed to its misses.
+if CommandLine.arguments.contains("--ai-choices") {
+    exit(ComputerOpponent.choices(options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+// What a cushion does to a ball that arrives at an angle: what the routes are aimed from.
+if CommandLine.arguments.contains("--ai-cushion") {
+    exit(ComputerOpponent.cushion(options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+// The computer at the table in the window's own scene, with no window: the one piece of the player that
+// the core's tests cannot reach.
+if CommandLine.arguments.contains("--computer-check") {
+    exit(ComputerOpponent.computerCheck(options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+if CommandLine.arguments.contains("--ui-check") {
+    exit(ComputerOpponent.uiCheck(options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+// Where a model's operations would run, without playing anything: the Neural Engine, the GPU or the CPU.
+if CommandLine.arguments.contains("--ai-compare") {
+    exit(ComputerOpponent.compare(options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+// Where a model's operations would run, without playing anything: the Neural Engine, the GPU or the CPU.
+if let index = CommandLine.arguments.firstIndex(of: "--ai-model-plan") {
+    guard CommandLine.arguments.count > index + 1 else {
+        print("--ai-model-plan needs a model to look at")
+        exit(2)
+    }
+    _ = LearnedValue.load(path: CommandLine.arguments[index + 1])
+    exit(0)
 }
 
 // Snapshot mode renders the 3D table offscreen instead of opening a window, so the view can be
