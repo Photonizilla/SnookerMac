@@ -1,5 +1,9 @@
 # The learned value function
 
+**The learned policy is in [POLICY.md](POLICY.md)**: a network that reads the position and gives the whole
+stroke — aim, power, side spin, vertical spin and lift — with its dataset export, supervised training, Core
+ML conversion and self-play loop. The rest of this file is the value network the search uses at its leaves.
+
 The computer player in `Sources/SnookerCore` plays by searching the real physics: it proposes shots, plays
 each of them out in full, and judges the position it is left with. That judgement —
 `ComputerPlayer.value(of:result:)` — is one small function of hand-written arithmetic, and it is the one

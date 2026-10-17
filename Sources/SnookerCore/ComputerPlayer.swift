@@ -156,6 +156,11 @@ public final class ComputerPlayer {
     /// kept as a switch, and the default is the one-shot value, which is what the measurements found gave
     /// the better play; `--line-tuning` turns it on.
     public var tuneAgainstTheLine: Bool = false
+    /// A learned policy, when one is loaded: the position's features in, the **whole stroke** out — the
+    /// angle, the power, both spins and the lift. When it is set the search is not asked to choose a shot:
+    /// what the network says is played, with the cue action's own error applied as it is for any stroke.
+    /// A model that cannot answer falls back to the search rather than stalling the frame.
+    public var policy: ((PositionFeatures) -> Shot?)?
     /// How long one decision may take, in seconds. The search is anytime: it stops when the clock does and
     /// plays the best line it has found.
     public var timeBudget: Double = 4.0
@@ -272,6 +277,16 @@ public final class ComputerPlayer {
             }
         }
 
+        // Every parameter of the stroke is the network's when there is one: the aim, the strength, both
+        // spins and the lift, from the balls on the table and the score. The search is not consulted.
+        if let policy, driver.canStrike,
+           let answered = policy(PositionFeatures.of(state, aimError: aimError)) {
+            let shot = ComputerPlayer.legalShot(answered)
+            lastPlan = "the network's shot — \(shot.describedForTheLog)"
+            lastIntent = .neural
+            return .shoot(theShotAsItWillBePlayed(shot))
+        }
+
         if driver.canStrike, let choice = bestShot(for: driver) {
             lastPlan = "\(choice.intent.summary) — \(choice.shot.describedForTheLog)"
             lastIntent = choice.intent
@@ -280,6 +295,18 @@ public final class ComputerPlayer {
             return .shoot(theShotAsItWillBePlayed(choice.shot))
         }
         return .wait
+    }
+
+    /// What the network asked for, brought inside what the cue can do. The model is trained on legal shots
+    /// but has no way of promising one, and a network answer is not a licence to play a shot the game
+    /// cannot: a power of nothing is not a stroke, and the tip cannot go past its own face.
+    static func legalShot(_ shot: Shot) -> Shot {
+        var legal = shot
+        legal.power = min(1, max(0.03, shot.power))
+        legal.side = min(1, max(-1, shot.side))
+        legal.vertical = min(1, max(-1, shot.vertical))
+        legal.elevation = min(45 * .pi / 180, max(0, shot.elevation))
+        return legal
     }
 
     /// Where the balls are, coarsely, and what is on — **not** whose turn it is, because a position two

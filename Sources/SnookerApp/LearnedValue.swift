@@ -52,7 +52,7 @@ enum LearnedValue {
     /// Asks Core ML where the model's operations would run — the Neural Engine, the GPU or the CPU — and
     /// says so. It is the difference between a model that is *allowed* on the Neural Engine and one that
     /// is actually put there: an operation Core ML cannot hand to it takes the whole graph off it.
-    private static func describeThePlan(of url: URL, configuration: MLModelConfiguration) {
+    static func describeThePlan(of url: URL, configuration: MLModelConfiguration) {
         guard #available(macOS 14.4, *) else { return }
         var counts: [String: Int] = [:]
         let done = DispatchSemaphore(value: 0)
@@ -84,4 +84,53 @@ enum LearnedValue {
         print("the model: \(summary)")
     }
 
+}
+
+/// The learned **policy**: a network that reads a position — every ball on the table, the ball on, the
+/// score — and answers with the whole stroke. The angle, the strength, both spins and the lift are each
+/// the network's, and the search is not asked for a shot while one is loaded.
+///
+/// The model is a Core ML program with one input (`position`, `PositionFeatures`) and one output (`shot`):
+/// `sin(angle), cos(angle), power, side, vertical, elevation ÷ 45°`. The angle is a pair rather than a
+/// number so that the wrap at ±180° is not a cliff for the network to fall off; the pair is normalised at
+/// inference and turned back into an angle with `atan2`.
+enum LearnedPolicy {
+
+    /// The lift the sixth output is scaled by: the search's own lifts run to 20°, and this leaves room
+    /// without asking a network for a cue stood on end.
+    static let maximumLift = 45 * Double.pi / 180
+
+    /// Loads a policy and returns the function the player asks for, or nil if it will not load.
+    static func load(path: String, describe: Bool = true) -> ((PositionFeatures) -> Shot?)? {
+        let source = URL(fileURLWithPath: path)
+        do {
+            let compiled = source.pathExtension == "mlmodelc"
+                ? source
+                : try MLModel.compileModel(at: source)
+            let configuration = MLModelConfiguration()
+            configuration.computeUnits = .cpuAndNeuralEngine
+            let model = try MLModel(contentsOf: compiled, configuration: configuration)
+            if describe { LearnedValue.describeThePlan(of: compiled, configuration: configuration) }
+            let shape = [1, NSNumber(value: PositionFeatures.count)]
+            return { features in
+                guard let input = try? MLMultiArray(shape: shape, dataType: .float32) else { return nil }
+                for (index, value) in features.values.enumerated() {
+                    input[index] = NSNumber(value: value)
+                }
+                guard let provider = try? MLDictionaryFeatureProvider(
+                        dictionary: ["position": MLFeatureValue(multiArray: input)]),
+                      let output = try? model.prediction(from: provider),
+                      let shot = output.featureValue(for: "shot")?.multiArrayValue,
+                      shot.count >= 6 else { return nil }
+                return Shot(angle: atan2(shot[0].doubleValue, shot[1].doubleValue),
+                            power: shot[2].doubleValue,
+                            side: shot[3].doubleValue,
+                            vertical: shot[4].doubleValue,
+                            elevation: shot[5].doubleValue * maximumLift)
+            }
+        } catch {
+            print("could not load the learned policy from \(path): \(error)")
+            return nil
+        }
+    }
 }

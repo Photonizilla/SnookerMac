@@ -55,6 +55,7 @@ enum ComputerOpponent {
 
     static func playFrames(_ count: Int, options: Options) -> Int32 {
         let learned = valueFunction(for: options)
+        let policy = options.policyPath.flatMap { LearnedPolicy.load(path: $0) }
         let verbose = options.verbose
         var random = SeededRandom(seed: options.seed ^ 0xC0FFEE)
         let unit: () -> Double = { random.unit() }
@@ -70,6 +71,7 @@ enum ComputerOpponent {
                 difficulty: options.difficulty,
                 configure: { player in
                     player.valueOfPosition = learned
+                    player.policy = policy
                     dress(player, with: options, random: unit)
                 }
             ) { event in
@@ -121,6 +123,178 @@ enum ComputerOpponent {
         print("total wall clock    \(String(format: "%.1f", Date().timeIntervalSince(start))) s")
         for line in tally.trouble.prefix(10) { print("trouble: \(line)") }
         return tally.trouble.isEmpty ? 0 : 1
+    }
+
+    // MARK: - Learning a policy
+
+    /// One sample of a policy dataset: a position, the stroke the teacher chose there, and what the stroke
+    /// turned out to be worth. The last four are filled in after the stroke — `won` only when the frame is.
+    struct PolicySample {
+        var features: [Float]
+        var labels: [Float]
+        var points: Float = 0
+        var foul: Float = 0
+        var kept: Float = 0
+        var won: Float = 0
+    }
+
+    /// What the network is asked to give back for a stroke: the aim as a **pair** — so the wrap at ±180° is
+    /// not a cliff — then the strength, both spins and the lift as a fraction of `LearnedPolicy.maximumLift`.
+    static func policyLabels(_ shot: Shot) -> [Float] {
+        [Float(sin(shot.angle)), Float(cos(shot.angle)), Float(shot.power), Float(shot.side),
+         Float(shot.vertical), Float(shot.elevation / LearnedPolicy.maximumLift)]
+    }
+
+    /// The file is `SNOOKERPC1`, a count, a stride, then the features, the six labels and the four outcomes.
+    static func writePolicySamples(_ samples: [PolicySample], to path: String) -> Bool {
+        var data = Data()
+        data.append(contentsOf: Array("SNOOKERPC1".utf8))
+        func put(_ value: UInt32) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        func put(_ value: Float) {
+            withUnsafeBytes(of: value.bitPattern.littleEndian) { data.append(contentsOf: $0) }
+        }
+        put(UInt32(samples.count))
+        put(UInt32(PositionFeatures.count + 6 + 4))
+        for sample in samples {
+            for value in sample.features { put(value) }
+            for value in sample.labels { put(value) }
+            for value in [sample.points, sample.foul, sample.kept, sample.won] { put(value) }
+        }
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+            return true
+        } catch {
+            print("could not write \(path): \(error)")
+            return false
+        }
+    }
+
+    /// **Supervised**: the current Hard player's own shots, recorded where it plays them. The teacher runs
+    /// with no aim error so that the target is the shot it *chose* and not that run's draw of the miss; the
+    /// network is given the position's features with the Hard cue action in them, and the σ is applied to
+    /// the network's own shot when it is played.
+    static func exportPolicy(path: String, options: Options) -> Int32 {
+        let start = Date()
+        var samples: [PolicySample] = []
+        for frame in 0..<options.frames {
+            let driver = FrameDriver(playerNames: ["A", "B"])
+            driver.game.decideTheDraw = { frame % 2 }
+            // A layout to start from, different every frame: a teacher with no aim error plays the same
+            // opening frame after frame, and a dataset of six of those is a dataset of one position.
+            let layout = PositionGenerator.positions(count: 1, reds: min(15, options.reds),
+                                                     seed: options.seed &+ UInt64(frame) &* 7919)[0]
+            driver.load(layout)
+            let players = [ComputerPlayer(playerIndex: 0, difficulty: .hard),
+                           ComputerPlayer(playerIndex: 1, difficulty: .hard)]
+            for player in players {
+                player.aimError = 0
+                player.decideTheDraw = { frame % 2 }
+            }
+            var frameSamples: [(index: Int, who: Int)] = []
+            var strokes = 0
+            while !driver.game.state.frameOver, strokes < 500 {
+                let who = driver.game.state.currentPlayer
+                let action = players[who].nextAction(for: driver)
+                if case .shoot(let shot) = action {
+                    samples.append(PolicySample(
+                        features: PositionFeatures.of(driver.game.state,
+                                                      aimError: options.cueAction).values,
+                        labels: policyLabels(shot)))
+                    frameSamples.append((samples.count - 1, who))
+                    strokes += 1
+                }
+                guard ComputerMatch.apply(action, to: driver) else {
+                    if options.verbose {
+                        print("  stopped: \(action) in \(driver.mode),"
+                                + " pending \(String(describing: driver.game.state.pending))")
+                    }
+                    break
+                }
+                if case .shoot = action, let index = frameSamples.last?.index {
+                    samples[index].points = Float(driver.lastResult?.pointsScored ?? 0)
+                    samples[index].foul = driver.lastResult?.foul != nil ? 1 : 0
+                    samples[index].kept = driver.game.state.currentPlayer == who ? 1 : 0
+                }
+            }
+            if let winner = driver.game.state.winner {
+                for sample in frameSamples where sample.who == winner { samples[sample.index].won = 1 }
+            }
+            if options.verbose {
+                print("  frame \(frame + 1) of \(options.frames): \(strokes) strokes,"
+                        + " \(driver.game.state.scores[0])–\(driver.game.state.scores[1]),"
+                        + " \(samples.count) samples, \(String(format: "%.0f", Date().timeIntervalSince(start))) s")
+            }
+        }
+        guard writePolicySamples(samples, to: path) else { return 1 }
+        print("wrote \(samples.count) policy samples to \(path)")
+        return 0
+    }
+
+    /// **Self-play**: the learned policy plays itself, and the current Hard player labels every position the
+    /// policy actually visits. The states are the policy's — that is the distribution it has to be good on;
+    /// the targets are the strong player's — that is what it is being taught. The policy's own strokes,
+    /// their points and whether it kept the table, are recorded with each sample so that later training can
+    /// weight or filter with them.
+    static func selfPlay(path: String, options: Options) -> Int32 {
+        guard let policyPath = options.policyPath,
+              let policy = LearnedPolicy.load(path: policyPath) else {
+            print("--ai-selfplay needs --policy <a model that loads>")
+            return 2
+        }
+        let start = Date()
+        var samples: [PolicySample] = []
+        for frame in 0..<options.frames {
+            let driver = FrameDriver(playerNames: ["A", "B"])
+            driver.game.decideTheDraw = { frame % 2 }
+            let learners = [ComputerPlayer(playerIndex: 0, difficulty: .hard),
+                            ComputerPlayer(playerIndex: 1, difficulty: .hard)]
+            let teachers = [ComputerPlayer(playerIndex: 0, difficulty: .hard),
+                            ComputerPlayer(playerIndex: 1, difficulty: .hard)]
+            for player in learners {
+                player.policy = policy
+                player.aimError = options.cueAction
+                player.decideTheDraw = { frame % 2 }
+            }
+            for teacher in teachers {
+                teacher.aimError = 0
+                teacher.decideTheDraw = { frame % 2 }
+            }
+            var frameSamples: [(index: Int, who: Int)] = []
+            var strokes = 0
+            while !driver.game.state.frameOver, strokes < 500 {
+                let who = driver.game.state.currentPlayer
+                let action = learners[who].nextAction(for: driver)
+                if case .shoot = action {
+                    if case .shoot(let target) = teachers[who].nextAction(for: driver) {
+                        samples.append(PolicySample(
+                            features: PositionFeatures.of(driver.game.state,
+                                                          aimError: options.cueAction).values,
+                            labels: policyLabels(target)))
+                        frameSamples.append((samples.count - 1, who))
+                    }
+                    strokes += 1
+                }
+                guard ComputerMatch.apply(action, to: driver) else { break }
+                if case .shoot = action, let index = frameSamples.last?.index {
+                    samples[index].points = Float(driver.lastResult?.pointsScored ?? 0)
+                    samples[index].foul = driver.lastResult?.foul != nil ? 1 : 0
+                    samples[index].kept = driver.game.state.currentPlayer == who ? 1 : 0
+                }
+            }
+            if let winner = driver.game.state.winner {
+                for sample in frameSamples where sample.who == winner { samples[sample.index].won = 1 }
+            }
+            if options.verbose {
+                print("  frame \(frame + 1) of \(options.frames): \(strokes) strokes,"
+                        + " \(driver.game.state.scores[0])–\(driver.game.state.scores[1]),"
+                        + " \(samples.count) samples, \(String(format: "%.0f", Date().timeIntervalSince(start))) s")
+            }
+        }
+        guard writePolicySamples(samples, to: path) else { return 1 }
+        print("wrote \(samples.count) self-play policy samples to \(path)")
+        return 0
     }
 
     // MARK: - What thinking costs
@@ -191,6 +365,11 @@ enum ComputerOpponent {
         /// one-shot value: `--line-tuning` on, `--no-line-tuning` off. Nothing means **the difficulty's
         /// own** — on for Hard, off for the others. See `ComputerPlayer.tuneAgainstTheLine`.
         var lineTuning: Bool?
+        /// A learned policy to play the stroke with: `--policy <model>`. Every parameter of the shot comes
+        /// out of the network; without it the search decides, as before.
+        var policyPath: String?
+        /// How many frames `--ai-export-policy` and `--ai-selfplay` should play.
+        var frames = 10
         /// How far off the line the computer's cue goes, in degrees. Nothing means **the difficulty's
         /// own**: each of the three has a cue action of its own, and `--ai-error` is only for asking what
         /// a different one would do.
@@ -235,6 +414,10 @@ enum ComputerOpponent {
             bothSeats = arguments.contains("--both")
             if arguments.contains("--line-tuning") { lineTuning = true }
             if arguments.contains("--no-line-tuning") { lineTuning = false }
+            policyPath = ComputerOpponent.argument("--policy", in: arguments)
+            if let value = ComputerOpponent.argument("--frames", in: arguments), let n = Int(value) {
+                frames = max(1, n)
+            }
             if let value = ComputerOpponent.argument("--depth", in: arguments), let n = Int(value) {
                 depth = max(1, n)
             }
@@ -444,6 +627,7 @@ enum ComputerOpponent {
                     case .pot: kind = "pot"
                     case .safety: kind = "safety"
                     case .escape: kind = "escape"
+                    case .neural: kind = "the network's shot"
                     case nil: kind = "?"
                     }
                     strokesByKind[kind, default: 0] += 1
@@ -561,6 +745,7 @@ enum ComputerOpponent {
             case .pot: return "pot"
             case .safety: return "safety"
             case .escape: return "escape"
+            case .neural: return "the network's shot"
             case nil: return "?"
             }
         }

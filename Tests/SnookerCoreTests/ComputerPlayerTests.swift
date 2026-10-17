@@ -204,7 +204,7 @@ final class ComputerPlayerTests: XCTestCase {
         // And both are strokes that can be played: a pot, a safety or an escape.
         for choice in [one, three] {
             switch choice.intent {
-            case .pot, .safety, .escape: break
+            case .pot, .safety, .escape, .neural: break
             }
             XCTAssertTrue(choice.shot.power > 0 && choice.shot.power <= 1)
         }
@@ -599,6 +599,25 @@ final class ComputerPlayerTests: XCTestCase {
                           "the throw-aware aim puts the object ball on its line (worst \(worstThrowAware)°)")
         XCTAssertGreaterThan(worstPlain, 3.0,
                              "and the plain aim is the one that needs it (worst \(worstPlain)°)")
+    }
+
+    /// A policy, when one is installed, gives **every** parameter of the stroke, and the search is not asked
+    /// for a shot. The cue action's own error is applied to it as it is to any stroke.
+    func testThePolicyGivesEveryParameterOfTheStroke() {
+        let driver = straightRedSetup()
+        let computer = ComputerPlayer(playerIndex: 0, difficulty: .hard)
+        let chosen = Shot(angle: 0.4, power: 0.62, side: -0.2, vertical: 0.3,
+                          elevation: 6 * .pi / 180)
+        computer.policy = { _ in chosen }
+        guard case .shoot(let played) = computer.nextAction(for: driver) else {
+            return XCTFail("the policy's shot was not taken")
+        }
+        XCTAssertEqual(played.angle, chosen.angle, accuracy: 0.01, "Hard's 0.03° of cue action")
+        XCTAssertEqual(played.power, chosen.power, accuracy: 1e-9)
+        XCTAssertEqual(played.side, chosen.side, accuracy: 1e-9)
+        XCTAssertEqual(played.vertical, chosen.vertical, accuracy: 1e-9)
+        XCTAssertEqual(played.elevation, chosen.elevation, accuracy: 1e-9)
+        XCTAssertEqual(computer.lastIntent, .neural)
     }
 
     func testTheSamplerDrawsFromANormalDistribution() {

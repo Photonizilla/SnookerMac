@@ -1,0 +1,73 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "shortDescription" : "The stroke a player should play from this position, from PositionFeatures.of: aim sin and cos, power, side, vertical, lift\/45°",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 6)",
+        "shortDescription" : "",
+        "shape" : "[1, 6]",
+        "name" : "shot",
+        "type" : "MultiArray"
+      }
+    ],
+    "storagePrecision" : "Float16",
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 7,
+    "mlProgramOperationTypeHistogram" : {
+      "Concat" : 1,
+      "Ios16.cast" : 1,
+      "SliceByIndex" : 4,
+      "Ios16.sigmoid" : 2,
+      "Ios16.conv" : 5,
+      "Ios16.add" : 1,
+      "Ios16.relu" : 4,
+      "Ios16.realDiv" : 1,
+      "Ios16.reduceL2Norm" : 1,
+      "Squeeze" : 1,
+      "ExpandDims" : 1,
+      "Ios16.tanh" : 1
+    },
+    "computePrecision" : "Mixed (Float16, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "13.0",
+      "tvOS" : "16.0",
+      "visionOS" : "1.0",
+      "watchOS" : "9.0",
+      "iOS" : "16.0",
+      "macCatalyst" : "16.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 152)",
+        "shortDescription" : "",
+        "shape" : "[1, 152]",
+        "name" : "position",
+        "type" : "MultiArray"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-10-18",
+      "com.github.apple.coremltools.source" : "torch==2.14.1",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "generatedClassName" : "Policy1",
+    "method" : "predict"
+  }
+]

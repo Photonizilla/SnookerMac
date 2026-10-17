@@ -215,6 +215,28 @@ if CommandLine.arguments.contains("--ai-roll") {
 // Positions, and what they are for: `--ai-export` writes what a player scored from each of a set of
 // random positions, for a network to be trained on; `--ai-measure` says what the player did with them,
 // which is the benchmark any change to the player is measured against.
+if let index = CommandLine.arguments.firstIndex(of: "--ai-export-policy") {
+    guard CommandLine.arguments.count > index + 1,
+          !CommandLine.arguments[index + 1].hasPrefix("--") else {
+        print("--ai-export-policy needs a path to write to")
+        exit(2)
+    }
+    exit(ComputerOpponent.exportPolicy(path: CommandLine.arguments[index + 1],
+                                       options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+// The policy playing itself, with the Hard player labelling the positions it visits: the states are the
+// network's own, the targets are the strong player's. `--ai-selfplay <path> --policy <model>`.
+if let index = CommandLine.arguments.firstIndex(of: "--ai-selfplay") {
+    guard CommandLine.arguments.count > index + 1,
+          !CommandLine.arguments[index + 1].hasPrefix("--") else {
+        print("--ai-selfplay needs a path to write to")
+        exit(2)
+    }
+    exit(ComputerOpponent.selfPlay(path: CommandLine.arguments[index + 1],
+                                   options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
 if let index = CommandLine.arguments.firstIndex(of: "--ai-export") {
     guard CommandLine.arguments.count > index + 1,
           !CommandLine.arguments[index + 1].hasPrefix("--") else {

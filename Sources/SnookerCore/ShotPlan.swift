@@ -52,6 +52,9 @@ public enum ShotIntent: Equatable, Sendable {
     case safety(ball: Int)
     /// Nothing can be hit straight on — come off a cushion, or through a gap, to reach a ball on.
     case escape
+    /// A stroke a learned policy chose: it gives every parameter of the stroke itself, so what the shot is
+    /// *for* is the policy's own business and not something the geometry has a word to say about.
+    case neural
 
     /// A word for the commentary.
     public var summary: String {
@@ -63,6 +66,8 @@ public enum ShotIntent: Equatable, Sendable {
             return "safety off \(ShotIntent.name(of: ball))"
         case .escape:
             return "escape"
+        case .neural:
+            return "the network's shot"
         }
     }
 
