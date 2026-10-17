@@ -1472,8 +1472,8 @@ itself in half as many hopeless places. Two frames from a rack:
 | | σ | that potted | fouls per 100 | highest breaks |
 |---|---|---|---|---|
 | Easy | 0.2° | 29% | 9.5 | 8, 13 |
-| Medium | 0.1° | 27% | 8.5 | 8, 12 |
-| Hard | 0.03° | 34% | 3.4 | 15, 9 |
+| Medium | 0.1° | 29% | 3.0 | 13, 8 |
+| Hard | 0.03° | 50% | 5.1 | 18, 18 |
 
 What the check says about the *geometry* is worth reading before believing any single number it prints: it
 plays the escapes the player would have had with the planner as it was, at the same positions, and reports
@@ -1549,24 +1549,27 @@ the side spin and the lift of the cue, one at a time, with the physics as the ju
 played with its shot's own draw of the aim error. Deeper lists are cut to a quarter, so a decision at
 Medium plays about sixty shots out and costs about a third of a second.
 
-**What the tuning is judged by.** By default each tuned variant is scored by the **one-shot** value: the
-points it scores plus what the position it leaves is worth, which is where the cue ball's place comes in
-(the best ball on and its ease, a snooker, a cue ball against a cushion). `--line-tuning` carries the best
-couple of variants into the line search instead, so a spin that pots a little worse now and plays position
-two shots on can win. Measured at the same seed, two frames a level:
+**What the tuning is judged by.** Each tuned variant is scored by the **one-shot** value — the points it
+scores, what the position it leaves is worth, and the next pot the cue ball has been left for: the ball
+on's own points times how much of an opportunity it is. That last term is deterministic and belongs to the
+tuning alone, so two spins are compared on the position they leave rather than on two draws of the aim
+error. `--line-tuning` goes further and carries the best couple of variants into the line search, so a spin
+that pots a little worse now and plays position two shots on can win. Measured at the same seed, two frames
+a level:
 
 | | strokes | potted | fouls per 100 | highest breaks | a decision |
 |---|---|---|---|---|---|
-| Medium, one-shot tuning | 153 | 27% | 8.5 | 8, 12 | 355 ms |
-| Medium, line tuning | 262 | 23% | 11.8 | 9, 9 | 439 ms |
-| Hard, one-shot tuning | 148 | 34% | 3.4 | 15, 9 | 368 ms |
-| Hard, line tuning | 147 | 34% | 2.7 | 13, 8 | 412 ms |
+| Medium, one-shot tuning | 167 | 29% | 3.0 | 13, 8 | 303 ms |
+| Medium, line tuning | 174 | 27% | 7.5 | 9, 8 | 363 ms |
+| Hard, one-shot tuning | 146 | 37% | 3.4 | 11, 16 | 350 ms |
+| Hard, line tuning | 117 | 50% | 5.1 | 18, 18 | 496 ms |
 
-The line did not pay at Medium and was neutral at Hard, so it is **off by default**. The reason is in the
-arithmetic: the continuation draws its own aim errors for each candidate, so two variants are compared
-through two different sets of misses as well as two positions, and the shots further into the line are not
-themselves tuned. Comparing variants with the **same** error draws (common random numbers), and tuning the
-reply as well, is the next thing to try before turning it on.
+The line pays at **Hard** and does not at Medium, so it is on for Hard and off for Easy and Medium;
+`--line-tuning` / `--no-line-tuning` overrides either. Over three frames the difference at Hard is 39% of
+strokes potted and breaks of 11 and 16 without it against 44% and 20 and 28 with it. The reason is the aim
+error: the continuation draws its own misses, and at Medium and Easy those misses are what the comparison
+is mostly about; at Hard the position is what is left to compare. Comparing the variants' continuations
+with the **same** error draws (common random numbers) is the next thing to try at the lower difficulties.
 
 The judgement it plays out *to* had one thing missing for break-building, and it is now in: the value of a
 position depends on **which** ball is on, not only how easy it is. Being on the black with a pot is a
@@ -1601,8 +1604,8 @@ difference between them. Three frames apiece from a rack:
 | | σ | strokes | that potted | fouls per 100 | highest breaks |
 |---|---|---|---|---|---|
 | Easy | 0.2° | 271 | 28% | 8.1 | 8, 13 |
-| Medium | 0.1° | 255 | 27% | 7.1 | 16, 12 |
-| Hard | 0.03° | 398 | 36% | 8.0 | 31, 22 |
+| Medium | 0.1° | 315 | 29% | 5.4 | 13, 9 |
+| Hard | 0.03° | 255 | 44% | 7.1 | 20, 28 |
 
 Measured over 25 random positions, with the same errors drawn for both players (`--ai-choices`), and with
 the strokes that potted from `--ai-measure` over 30:

@@ -213,6 +213,7 @@ public final class ComputerPlayer {
         self.elevations = difficulty.elevations
         self.rolloutBudget = difficulty.rolloutBudget
         self.aimError = difficulty.aimError
+        self.tuneAgainstTheLine = difficulty == .hard
     }
 
     private func applyTheDifficulty() {
@@ -223,6 +224,11 @@ public final class ComputerPlayer {
         elevations = difficulty.elevations
         rolloutBudget = difficulty.rolloutBudget
         aimError = difficulty.aimError
+        // The line is the harder question: its continuation is worth trusting once the cue action is
+        // accurate enough that its misses are not what the comparison is mostly about. Measured: Hard goes
+        // from 39% of strokes potted and breaks of 11 and 16 to 44% and 20 and 28 over three frames; Medium
+        // gets worse. `--line-tuning` / `--no-line-tuning` overrides it.
+        tuneAgainstTheLine = difficulty == .hard
     }
 
     // MARK: - What to do next
@@ -468,6 +474,7 @@ public final class ComputerPlayer {
         -> (best: (choice: Choice, outcome: Outcome),
             alternatives: [(choice: Choice, outcome: Outcome)]) {
         var best = entry
+        var bestTuning = tuningValue(of: entry.outcome)
         var tried: [(choice: Choice, outcome: Outcome)] = []
         // The spins and the lift come **first** and the strength last, because a shot is one stroke: the tip
         // off centre spends part of the impulse on spin, so a ball struck with screw is slower than the same
@@ -520,7 +527,11 @@ public final class ComputerPlayer {
                 let variant = (Choice(shot: variants[index], intent: best.choice.intent,
                                       value: outcome.value, draw: best.choice.draw), outcome)
                 tried.append(variant)
-                if outcome.value > best.choice.value { best = variant }
+                let value = tuningValue(of: outcome)
+                if value > bestTuning {
+                    best = variant
+                    bestTuning = value
+                }
             }
         }
         // The best couple of variants that were not the one kept. They are close enough to be worth judging
@@ -528,9 +539,22 @@ public final class ComputerPlayer {
         // is exactly what the line search is for — and they are what `search` carries a ply further.
         let alternatives = tried
             .filter { $0.choice.shot != best.choice.shot }
-            .sorted { $0.choice.value > $1.choice.value }
+            .sorted { tuningValue(of: $0.outcome) > tuningValue(of: $1.outcome) }
             .prefix(2)
         return (best, Array(alternatives))
+    }
+
+    /// What a **tuned variant** is judged by: the one-shot value, plus the next pot the cue ball has been
+    /// left for, worth its own points times how much of an opportunity it is.
+    ///
+    /// That is the cue ball's position used for what it is for — the shot after this one — and it is added
+    /// **here** rather than to `positionValue` on purpose: the tuning is choosing the tip and the strength
+    /// for a line that is already picked, and the rest of the search is left judging positions the way it
+    /// always has. It is deterministic, unlike carrying every variant into the line search, so two spins
+    /// are compared on the position they leave and not on two draws of the aim error.
+    private func tuningValue(of outcome: Outcome) -> Double {
+        guard let leaf = outcome.leaf, outcome.stillAtTheTable, !leaf.frameOver else { return outcome.value }
+        return outcome.value + 0.9 * Double(ballOnValue(of: leaf)) * opportunity(in: leaf)
     }
 
     /// Plays a list of shots out on copies of the frame, all at once, and says what each was worth. Nil

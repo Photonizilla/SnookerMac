@@ -188,8 +188,9 @@ enum ComputerOpponent {
         /// the default of three.
         var depth: Int?
         /// Whether the shot's spin and strength are tuned by the line they leave rather than by the
-        /// one-shot value: `--line-tuning`. Off by default; see `ComputerPlayer.tuneAgainstTheLine`.
-        var lineTuning = false
+        /// one-shot value: `--line-tuning` on, `--no-line-tuning` off. Nothing means **the difficulty's
+        /// own** — on for Hard, off for the others. See `ComputerPlayer.tuneAgainstTheLine`.
+        var lineTuning: Bool?
         /// How far off the line the computer's cue goes, in degrees. Nothing means **the difficulty's
         /// own**: each of the three has a cue action of its own, and `--ai-error` is only for asking what
         /// a different one would do.
@@ -232,7 +233,8 @@ enum ComputerOpponent {
             learned = arguments.contains("--learned")
             modelPath = ComputerOpponent.argument("--model", in: arguments)
             bothSeats = arguments.contains("--both")
-            lineTuning = arguments.contains("--line-tuning")
+            if arguments.contains("--line-tuning") { lineTuning = true }
+            if arguments.contains("--no-line-tuning") { lineTuning = false }
             if let value = ComputerOpponent.argument("--depth", in: arguments), let n = Int(value) {
                 depth = max(1, n)
             }
@@ -258,7 +260,7 @@ enum ComputerOpponent {
     static func dress(_ player: ComputerPlayer, with options: Options, random: @escaping () -> Double) {
         player.aimError = options.cueAction
         player.aimErrorSource = random
-        player.tuneAgainstTheLine = options.lineTuning
+        if let lineTuning = options.lineTuning { player.tuneAgainstTheLine = lineTuning }
         if let depth = options.depth { player.depth = depth }
     }
 
