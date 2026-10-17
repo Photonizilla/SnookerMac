@@ -1439,6 +1439,17 @@ public final class PhysicsWorld {
             guard balls[i].id != held?.ball else { continue }
             var ball = balls[i]
             let centre = Vec3(ball.position.x, ball.position.y, ball.height)
+            // A ball nowhere near the stick cannot meet it, and the girth-by-girth test below is the most
+            // expensive thing a step does: one distance to the stick's own length — the segment from the
+            // butt to a ball's radius in front of the tip, which is as far as the tip's face reaches — is a
+            // cheap way to leave the rest of the table out of it. The bounding radius is the butt's, so
+            // nothing the real shape could reach is ever skipped.
+            let farEnd = cue.tip + cue.axis * Table.ballRadius
+            let nearEnd = cue.tip - cue.axis * Table.cueLength
+            let nearestToTheStick = PhysicsWorld.closestPoint(to: centre, onTheSegment: farEnd, nearEnd)
+            if (nearestToTheStick - centre).length > Table.cueButtRadius + Table.ballRadius {
+                continue
+            }
             guard let contact = cueContact(with: centre) else { continue }
 
             // Out of the stick, along the contact normal — and never below the bed, which holds it up.

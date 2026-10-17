@@ -75,9 +75,10 @@ public enum ComputerMatch {
             return true
         case .shoot(let shot):
             // Played the way a player plays it — a charge and the cue action it leaves behind — so that a
-            // frame played out headless is the same game as one played at the table.
+            // frame played out headless is the same game as one played at the table, down to the stick the
+            // player has to keep out of the balls' way.
             guard driver.playCharged(shot, at: Date().timeIntervalSinceReferenceDate) else { return false }
-            driver.runStrokeToRest()
+            driver.runStrokeToRest(lookingAfterTheCue: true)
             return true
         }
     }

@@ -451,9 +451,9 @@ final class ComputerPlayerTests: XCTestCase {
         driver.world.cue = cueOnTheTable
         XCTAssertEqual(driver.cueHandling, .laid, "the cue is on the table to begin with")
 
-        // A red 200 mm off the butt of it, rolling at 1 m/s towards it.
+        // A red 200 mm in front of the tip, rolling at 1 m/s back into it.
         driver.world.setBall(Ball(id: BallID.firstRed, color: .red,
-                                  position: Vec2(2600, Table.centreY), velocity: Vec2(-1000, 0)))
+                                  position: Vec2(1200, Table.centreY), velocity: Vec2(-1000, 0)))
         XCTAssertTrue(driver.aBallIsHeadingForTheCue, "that ball is coming for it")
 
         driver.takeTheCueOffTheTable()
@@ -463,8 +463,89 @@ final class ComputerPlayerTests: XCTestCase {
         // And the other way: a ball rolling away from the stick is no danger at all.
         driver.putTheCueBackOnTheTable()
         driver.world.setBall(Ball(id: BallID.firstRed, color: .red,
-                                  position: Vec2(2600, Table.centreY), velocity: Vec2(1000, 0)))
+                                  position: Vec2(1200, Table.centreY), velocity: Vec2(1000, 0)))
         XCTAssertFalse(driver.aBallIsHeadingForTheCue, "a ball going the other way is not coming for it")
+
+        // Nor is a ball that is coming for it but is still more than a second away: a player who took the
+        // cue up at every ball pointed their way would never lay it down again.
+        driver.world.setBall(Ball(id: BallID.firstRed, color: .red,
+                                  position: Vec2(2600, Table.centreY), velocity: Vec2(-1000, 0)))
+        XCTAssertFalse(driver.aBallIsHeadingForTheCue, "that one is 1.6 s off yet")
+    }
+
+    /// The ball that most often comes for the stick is the one it has just struck: a screw shot sends the
+    /// cue ball back down the line of the cue, and the tip that struck it is standing on that line.
+    func testAScrewShotTakesTheCueUpBeforeTheCueBallComesBackToIt() {
+        // Played with nobody looking after the stick, the cue ball comes back into it: that is the contact
+        // this is about, and the reason the test below is worth having.
+        let left = aScrewShotPlayedOut(lookingAfterTheCue: false)
+        XCTAssertEqual(left.driver.lastStroke?.ballsTheCueTouched ?? [], [BallID.cue],
+                       "the cue ball came back into the cue left standing in its way")
+
+        // And with the player's own eye on it, the cue is up before the ball gets there: no contact at all.
+        let looked = aScrewShotPlayedOut(lookingAfterTheCue: true)
+        XCTAssertTrue(looked.tookTheCueUp, "the cue is taken up as the ball comes back")
+        XCTAssertEqual(looked.driver.lastStroke?.ballsTheCueTouched ?? [], [],
+                       "the cue was out of the ball's way in time")
+    }
+
+    /// A play-out that takes the cue up has to lay it again, or the player it is measuring could never play
+    /// another stroke: `canStrike` is false with the cue since put away.
+    func testAPlayOutThatTookItsCueUpLaysItAgainForTheNextStroke() {
+        let driver = straightScrewSetup()
+        Shot(angle: 0, power: 0.7, vertical: -0.5).play(on: driver)
+        driver.runStrokeToRest(lookingAfterTheCue: true)
+        XCTAssertEqual(driver.cueHandling, .laid,
+                       "the cue is laid again, ready for the next stroke")
+    }
+
+    /// A screw shot played out to rest, with the cue left on the table — or taken up as soon as a ball is
+    /// coming for it, which is what the scene does for the computer.
+    ///
+    /// The shot is the ordinary one: a red dead in line down the table, played hard off the bottom of the
+    /// ball so that the cue ball comes back at the player — and at the cue, which is still standing where
+    /// the follow-through left it, on the very line the ball is coming back along.
+    private func aScrewShotPlayedOut(lookingAfterTheCue: Bool) -> (driver: FrameDriver,
+                                                                  tookTheCueUp: Bool) {
+        let driver = straightScrewSetup()
+        Shot(angle: 0, power: 0.7, vertical: -0.5).play(on: driver)
+        // The frame's own clock, run on as the scene runs it: the charge is what the meter is measured
+        // against, and a scripted cue action is driven by it.
+        var clock = Date().timeIntervalSinceReferenceDate
+        var elapsed = 0.0
+        var tookTheCueUp = false
+        while elapsed < 30, driver.mode == .charging || driver.mode == .simulating {
+            if lookingAfterTheCue, driver.aBallIsHeadingForTheCue {
+                driver.takeTheCueOffTheTable()
+                tookTheCueUp = true
+            }
+            if driver.mode == .charging {
+                clock += 1.0 / 240
+                driver.updateCharge(at: clock)
+            } else {
+                driver.update(dt: 1.0 / 240)
+            }
+            elapsed += 1.0 / 240
+        }
+        return (driver, tookTheCueUp)
+    }
+
+    /// A red dead in line down the table from the cue ball, and nothing else in the way: the shot a screw
+    /// is played on.
+    private func straightScrewSetup() -> FrameDriver {
+        let driver = FrameDriver(playerNames: ["A", "B"])
+        driver.game.withState { state in
+            state.ballsOnTable = [BallID.cue, BallID.firstRed]
+            state.redsRemaining = 1
+            state.ballOn = .red
+            state.ballPositions[BallID.firstRed] = Vec2(2400, Table.centreY)
+            state.ballPositions[BallID.cue] = Vec2(2000, Table.centreY)
+            state.cueBallInHand = false
+            state.pending = nil
+        }
+        driver.syncWorldFromState()
+        driver.load(driver.game.state)
+        return driver
     }
 
     func testTheSamplerDrawsFromANormalDistribution() {

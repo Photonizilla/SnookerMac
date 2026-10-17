@@ -248,29 +248,49 @@ public final class FrameDriver {
     /// A player sees it coming and takes the cue up. The question is asked of the balls' own velocities, a
     /// second ahead: a ball whose line carries it into the stick, soon, counts — and one rolling away from
     /// it never does, however close it is.
+    ///
+    /// **Every** ball counts, the cue ball with the rest: it is the one that most often comes for the
+    /// stick. A screw shot sends the cue ball back **down the line of the cue**, and the tip that struck it
+    /// is standing on the very line it is coming back along — so it is the ball this is really about, and
+    /// the one it used to leave out. The whole of the stick is looked at as well, and not only the tip: a
+    /// ball rolling at the shaft or the butt is a ball met with it just the same.
     public var aBallIsHeadingForTheCue: Bool {
         guard let cue = world.cue else { return false }
         let from = Vec2(cue.tip.x, cue.tip.y)
+        // `axis` runs from the butt towards the tip, so the stick is the tip and everything **behind** it:
+        // the piece of the table it stands on is the segment from the tip back to the butt, and a point of
+        // the line in front of the tip is not on the cue at all. Measuring to the wrong side of the tip is
+        // what made a ball coming straight back along the line read as no distance at all and no threat.
         let along = Vec2(cue.axis.x, cue.axis.y).normalized
         guard along.length > 0 else { return false }
-        let matter = 0.7 * 1000      // a ball's speed below which nothing is going anywhere
-        for ball in world.balls where ball.onTable && ball.id != BallID.cue {
+        let butt = from - along * Table.cueLength
+        // A ball slower than this is going nowhere: below the simulation's own resting speed (`restSpeed`,
+        // 6 mm/s) with room to spare, so a ball it calls asleep never takes a cue off the table, and one
+        // trickling at the stick still does.
+        let matter = 50.0
+        for ball in world.balls where ball.onTable {
             let speed = ball.velocity.length
             guard speed > matter else { continue }
-            // Where the ball would meet the stick: the nearest point of it to the ball's line, and how
-            // long the ball takes to get there.
-            let toTheBall = ball.position - from
-            let alongTheCue = min(Table.cueLength, max(0, toTheBall.dot(along)))
-            let nearestOnTheCue = from + along * alongTheCue
+            // Where the ball would meet the stick: the nearest point of the stick's own length to the
+            // ball, and how long the ball takes to get there.
+            let nearestOnTheCue = FrameDriver.nearestPoint(to: ball.position, from: from, to: butt)
             let toTheCue = nearestOnTheCue - ball.position
-            let distance = toTheCue.length
             let closing = toTheCue.normalized.dot(ball.velocity.normalized)
             guard closing > 0.2 else { continue }        // rolling away across it, not into it
-            let gap = distance - (Table.ballRadius + Table.cueTipRadius)
-            guard gap < 400 else { continue }            // in the region, not across the room
+            let gap = max(0, toTheCue.length - (Table.ballRadius + Table.cueTipRadius))
             if gap / speed < 1.0 { return true }         // and less than a second of it left
         }
         return false
+    }
+
+    /// The point of the segment `from`–`to` nearest to `p`, in the table's own plane: the nearest point of
+    /// a cue to a ball is a point of the stick, and not of the line the stick lies on.
+    private static func nearestPoint(to p: Vec2, from a: Vec2, to b: Vec2) -> Vec2 {
+        let along = b - a
+        let lengthSquared = along.lengthSquared
+        guard lengthSquared > 0 else { return a }
+        let t = min(1, max(0, (p - a).dot(along) / lengthSquared))
+        return a + along * t
     }
 
     /// Takes the cue off the table, if it is on it, and leaves it off: what a player does when a ball is
@@ -1681,7 +1701,16 @@ public final class FrameDriver {
     /// the stick off the table, so that the stroke is the balls' own game with nobody holding it in
     /// their way. A caller that wants the cue in play — to see a ball run into it — leaves it on the
     /// table and drives it with `carryTheCue`.
-    public func runStrokeToRest(maxSeconds: Double = 30) {
+    ///
+    /// `lookingAfterTheCue` is the **other** rule, and the one a player at the table plays by: the stick
+    /// stays on the table for the stroke — the strike and the follow-through, the cue action the player is
+    /// seen to play — and comes up when a ball is on its way to it (`aBallIsHeadingForTheCue`), which is
+    /// what the view does for the computer (`TableScene.theComputerLooksAfterItsCue`). Once the
+    /// follow-through is over there is nothing more the stick is doing, so it comes off the table then as
+    /// well. It is the rule the player's own search plays its shots out by, so that what it judges is what
+    /// the table will do: a cue left standing in the way of a ball is a foul, and a shot's worth has to be
+    /// read with it.
+    public func runStrokeToRest(maxSeconds: Double = 30, lookingAfterTheCue: Bool = false) {
         var elapsed = 0.0
         // A **charged** shot is played by the cue action the charge leaves behind, and the shot is not away
         // until that action has brought the cue through the ball: the runner drives it to the strike, and
@@ -1693,19 +1722,35 @@ public final class FrameDriver {
             elapsed += 1.0 / 120.0
             updateCharge(at: (lastChargeTick ?? elapsed) + 1.0 / 120.0)
         }
-        // The **contact** the strike is made of is the cue's own, and the ball has nothing until the leather
-        // has let it go: the runner plays that out before it takes the stick off the table, or it would be
-        // taking the tip away from a ball it is still holding.
-        var contact = 0.0
-        while world.theCueIsOn(BallID.cue), contact < 0.05 {
-            update(dt: 1.0 / 240.0)
-            contact += 1.0 / 240.0
+        if !lookingAfterTheCue {
+            // The **contact** the strike is made of is the cue's own, and the ball has nothing until the
+            // leather has let it go: the runner plays that out before it takes the stick off the table, or
+            // it would be taking the tip away from a ball it is still holding.
+            var contact = 0.0
+            while world.theCueIsOn(BallID.cue), contact < 0.05 {
+                update(dt: 1.0 / 240.0)
+                contact += 1.0 / 240.0
+            }
+            standUp()
+            world.cue = nil
         }
-        standUp()
-        world.cue = nil
         while mode == .simulating && elapsed < maxSeconds {
+            if lookingAfterTheCue, world.cue != nil {
+                // A ball on its way to the stick is what a player takes it up for, and what the table does
+                // with the computer's cue is exactly this: the stick stays on the table while the balls run
+                // and comes up when one is coming for it, so that a play-out is judged as the table plays.
+                if aBallIsHeadingForTheCue {
+                    takeTheCueOffTheTable()
+                }
+            }
             update(dt: 1.0 / 120.0)
             elapsed += 1.0 / 120.0
+        }
+        if lookingAfterTheCue, cueHandling == .putAway {
+            // The next stroke cannot be played without it, and the scene lays it again for the computer
+            // between strokes (`TableScene.theComputerLooksAfterItsCue`): a play-out has to leave the frame
+            // in the state the table would be in, or a player that took its cue up could never play again.
+            putTheCueBackOnTheTable()
         }
     }
 

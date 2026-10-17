@@ -1472,9 +1472,9 @@ should be:
 
 | | σ | that potted | fouls per 100 | highest breaks |
 |---|---|---|---|---|
-| Easy | 0.2° | 29% | 8.0 | 7, 8 |
-| Medium | 0.1° | 31% | 6.8 | 12, 9 |
-| Hard | 0.03° | 42% | 3.9 | 18, 15 |
+| Easy | 0.2° | 26% | 9.0 | 8, 15 |
+| Medium | 0.1° | 33% | 4.6 | 9, 21 |
+| Hard | 0.03° | 38% | 2.9 | 24, 10 |
 
 What the check says about the *geometry* is worth reading before believing any single number it prints: it
 plays the escapes the player would have had with the planner as it was, at the same positions, and reports
@@ -1508,8 +1508,16 @@ position measured — which is exactly what a player finds when they cannot get 
 **And it takes the cue up when a ball comes back at it.** The stick is on the table while the balls run, and
 a ball that reaches it is a ball met with the player's own equipment — a foul (Rule 11(b)(vi)) — so the
 computer watches the balls' own velocities a second ahead (`FrameDriver.aBallIsHeadingForTheCue`) and takes
-the cue off the table in time, laying it again for its next stroke. The search's own play-outs put the cue
-away as soon as the shot is struck, so the two agree about it either way.
+the cue off the table in time, laying it again for its next stroke. **The cue ball counts with the rest**,
+and it is the one that most often comes for the stick: a screw shot sends the cue ball back down the line of
+the cue, and the tip that struck it is standing on that line. The stick is looked at as the length it is —
+the tip and everything behind it — and not as the line it lies on, so a ball rolling at the shaft or the
+butt is a ball coming for the cue just as much as one rolling at the tip. The search's own play-outs judge a
+shot with the cue where the table has it — on the stick for the **stroke**, the strike and the follow-through
+both, and taken up when a ball comes for it (`FrameDriver.runStrokeToRest(lookingAfterTheCue:)`) — so a shot
+the cue's own follow-through would run into is judged as the foul it is, and one that would send the cue ball
+back into the stick is judged with the cue out of the way. The play-out lays the cue again for the next
+stroke, and the view does the same between the computer's strokes.
 
 One shot and where it leaves the balls is a player that pots; a player that **builds breaks** has to know
 where the balls will be *after the next one*, and the next. `ComputerPlayer.depth` is how many of its own
@@ -1557,9 +1565,9 @@ difference between them. Three frames apiece from a rack:
 
 | | σ | strokes | that potted | fouls per 100 | highest breaks |
 |---|---|---|---|---|---|
-| Easy | 0.2° | 220 | 28% | 7.7 | 11, 9 |
-| Medium | 0.1° | 239 | 32% | 3.8 | 16, 8 |
-| Hard | 0.03° | 204 | 40% | 7.8 | 15, 11 |
+| Easy | 0.2° | 352 | 26% | 9.7 | 8, 15 |
+| Medium | 0.1° | 234 | 32% | 4.7 | 9, 21 |
+| Hard | 0.03° | 211 | 37% | 4.3 | 24, 10 |
 
 Measured over 25 random positions, with the same errors drawn for both players (`--ai-choices`), and with
 the strokes that potted from `--ai-measure` over 30:

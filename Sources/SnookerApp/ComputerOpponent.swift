@@ -884,6 +884,10 @@ enum ComputerOpponent {
         var trouble: String?
         var lastSignature = ""
         var lastProgress = Date()
+        /// How many of the computer's own strokes ended with a ball it had struck coming back into its own
+        /// cue: the stick is on the table while the balls run (`theComputerLooksAfterItsCue` takes it up),
+        /// and every one of these is a foul the computer had no business playing.
+        var strokesThatHitTheCue = 0
 
         while Date() < finish {
             clock += 1.0 / 120.0
@@ -895,6 +899,10 @@ enum ComputerOpponent {
             let controller = scene.controller
             let running = controller.mode == .simulating
             if running, !wasRunning { strokes += 1 }
+            if !running, wasRunning, let stroke = controller.lastStroke,
+               !stroke.ballsTheCueTouched.isEmpty {
+                strokesThatHitTheCue += 1
+            }
             wasRunning = running
             if controller.game.state.frameOver { break }
             // One stroke is the whole of what the check is for; once it is over and the table settled,
@@ -924,6 +932,7 @@ enum ComputerOpponent {
             "scores                      \(controller.scores[0]) – \(controller.scores[1])",
             "the frame                   \(controller.isFrameOver ? "over" : "in play"), \(controller.ballOnDescription) on, \(controller.playerNames[controller.game.state.currentPlayer]) to play",
             "the referee                 \(controller.status)",
+            "strokes that hit the cue    \(strokesThatHitTheCue) of \(strokes)",
             "wall clock                  \(String(format: "%.1f", Date().timeIntervalSince(started))) s",
         ].joined(separator: "\n"))
         if let trouble { print("⚠️ \(trouble)"); return 1 }

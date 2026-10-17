@@ -542,9 +542,11 @@ public final class ComputerPlayer {
         // what will actually happen at the table, not an idealised version of it.
         let played = theShot(shot, withError: error ?? aimErrorOffset())
         // The stroke is the cue's before it is the ball's: it is not away until the tip has met it, and
-        // `runStrokeToRest` is what takes it that far before letting the balls run.
+        // `runStrokeToRest` is what takes it that far before letting the balls run — with the cue looked
+        // after the way the table looks after it, since a cue left in a ball's way is a foul the shot has
+        // to be judged with.
         guard probe.playCharged(played, at: 0) else { return nil }
-        probe.runStrokeToRest()
+        probe.runStrokeToRest(lookingAfterTheCue: true)
         // A stroke that never came off leaves nothing behind it: the cue action is the shot, and a shot
         // whose tip never reached the ball is one this player cannot play.
         guard probe.lastResult != nil else { return nil }
