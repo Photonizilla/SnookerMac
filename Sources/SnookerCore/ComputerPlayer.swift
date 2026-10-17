@@ -465,6 +465,19 @@ public final class ComputerPlayer {
                     shot.vertical = value
                 case "side":
                     guard value != 0 else { continue }
+                    // Side spin is what throws the object ball: the aim the geometry gave is for a plain
+                    // ball, and this is a different line. It is built again from the ball and the pocket
+                    // rather than nudged from the last one — the throw moves the ghost, and the ghost is
+                    // what the cue is aimed at. See `ShotGeometry.throwAwareAngle`.
+                    if case .pot(let ballID, let pocket, _) = best.choice.intent,
+                       let object = BallLayout(state: driver.game.state).position(of: ballID),
+                       let cue = driver.game.state.ballPositions[BallID.cue] {
+                        let cut = pocket.cut
+                        let aimPoint = cut.mouth + cut.axis * settings.pocketAimDepth
+                        shot.angle = ShotGeometry.throwAwareAngle(
+                            cueBall: cue, objectBall: object,
+                            objectDirection: aimPoint - object, side: value)
+                    }
                     shot.side = value
                 default:
                     guard value != 0 else { continue }

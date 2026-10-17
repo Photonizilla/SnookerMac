@@ -548,6 +548,59 @@ final class ComputerPlayerTests: XCTestCase {
         return driver
     }
 
+    /// Where the object ball actually goes when the cue is aimed at the **throw-aware** ghost, against the
+    /// plain one: the ball is put where the wanted line is `desired`, and what is measured is how far off
+    /// that line it leaves. The two balls' own friction is the whole of the difference.
+    func testAThrowAwareAimSendsTheObjectBallDownTheLine() {
+        func signedAngle(_ a: Vec2, _ b: Vec2) -> Double {
+            atan2(a.x * b.y - a.y * b.x, a.dot(b))
+        }
+        /// The object ball's departure from `desired`, in radians: aimed throw-aware, or at the plain ghost.
+        func error(cut: Double, side: Double, throwAware: Bool) -> Double? {
+            let desired = Vec2(cos(cut), sin(cut))
+            let cueStart = Vec2(600, 900)
+            let objectAt = Vec2(900, 900) + desired * Table.ballDiameter
+            let aim = throwAware
+                ? ShotGeometry.throwAwareAngle(cueBall: cueStart, objectBall: objectAt,
+                                               objectDirection: desired, side: side)
+                : ShotGeometry.angle(of: objectAt - cueStart)
+            let world = PhysicsWorld(balls: [
+                Ball(id: BallID.cue, color: .white, position: cueStart),
+                Ball(id: BallID.firstRed, color: .red, position: objectAt),
+            ])
+            world.applyCueStrike(cueBallID: BallID.cue, direction: Vec2(cos(aim), sin(aim)),
+                                 power: 2000, side: side, vertical: 0)
+            var steps = 0
+            while steps < 20_000 {
+                world.step(dt: 1.0 / 5000)
+                steps += 1
+                if let red = world.balls.first(where: { $0.id == BallID.firstRed }),
+                   red.velocity.length > 20 {
+                    return signedAngle(desired, red.velocity.normalized)
+                }
+            }
+            return nil
+        }
+
+        var worstThrowAware = 0.0
+        var worstPlain = 0.0
+        for cutDegrees in [15.0, 30.0, 45.0, 60.0] {
+            for side in [-0.5, -0.3, 0.0, 0.3, 0.5] {
+                let cut = cutDegrees * .pi / 180
+                guard let aware = error(cut: cut, side: side, throwAware: true),
+                      let plain = error(cut: cut, side: side, throwAware: false) else {
+                    return XCTFail("no contact at \(cutDegrees)°, side \(side)")
+                }
+                worstThrowAware = max(worstThrowAware, abs(aware) * 180 / .pi)
+                worstPlain = max(worstPlain, abs(plain) * 180 / .pi)
+            }
+        }
+        XCTAssertLessThan(worstThrowAware, 2.5,
+                          "the throw-aware aim puts the object ball on its line (worst \(worstThrowAware)°)")
+        XCTAssertGreaterThan(worstPlain, 3.0,
+                             "and the plain aim is the one that needs it (worst \(worstPlain)°)")
+    }
+
     func testTheSamplerDrawsFromANormalDistribution() {
         var generator = SeededRandom(seed: 99)
         let draws = (0..<20_000).map { _ in

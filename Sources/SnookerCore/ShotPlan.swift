@@ -204,6 +204,75 @@ public enum ShotGeometry {
         abs(atan2(sin(a - b), cos(a - b)))
     }
 
+    /// The turn of the **object ball** off the line of centres, as two balls rub against one another: the
+    /// friction at the touch, and the cue ball's side spin's part in it.
+    ///
+    /// The touch is worth a normal impulse of `(1+e)·V·cos(cut)/2`. What slides there is the cue ball's own
+    /// surface running across the object ball — `2.5·side·V` from the side spin, less `V·sin(cut)` from the
+    /// cut itself, which is the cue ball's surface already moving across the face of a cut — and friction
+    /// takes `min(slip/7, μ·jn)` of it. The object ball leaves `atan(jt/jn)` off the line of centres. Both
+    /// figures are proportional to the speed, so the throw depends on the **cut and the side alone** and not
+    /// on how hard the shot is played. Positive is a quarter turn counter-clockwise off the line of centres.
+    public static func throwAngle(cut: Double, side: Double) -> Double {
+        let k = max(-PhysicsWorld.cueTipOffsetLimit, min(PhysicsWorld.cueTipOffsetLimit, side))
+        let normalSpeed = cos(cut)
+        guard normalSpeed > 1e-6 else { return 0 }
+        let normalImpulse = (1 + PhysicsWorld.ballRestitution) * normalSpeed / 2
+        let slip = 2.5 * k - sin(cut)
+        let friction = min(abs(slip) / 7, PhysicsWorld.ballFriction * normalImpulse)
+        let angle = atan2(friction, normalImpulse)
+        return slip < 0 ? -angle : angle
+    }
+
+    /// The angle the cue ball leaves at **across** the cue's own line when the tip strikes `side` of its
+    /// face: squirt. A throw-aware aim has to take it out of the line as well as the throw, because the cue
+    /// ball's path is what sets the line of centres the object ball is thrown off.
+    public static func squirtAngle(side: Double) -> Double {
+        let k = max(-PhysicsWorld.cueTipOffsetLimit, min(PhysicsWorld.cueTipOffsetLimit, side))
+        return 0.022 * k
+    }
+
+    /// Where the cue has to point to send `objectBall` along `objectDirection` with `side` spin on the cue
+    /// ball, the **throw** and the **squirt** both taken out.
+    ///
+    /// The object ball leaves the line of centres thrown by `throwAngle`, so the line — and the ghost ball
+    /// with it — is turned the other way, and the cue is aimed at **that** ghost. The cue ball itself leaves
+    /// across the cue's line by its squirt, so the aim is turned back by that too. The ghost is only a
+    /// ball's width from the object ball, so a few degrees of throw turn the **aim** by a good deal less
+    /// than a few degrees: the turn is `diameter · throw` about the object ball, spread over the whole way
+    /// the cue ball has to come. The cut is taken again from the moved ghost, since it is what the throw is
+    /// read from, and the second pass settles the couple of degrees the first one moves it.
+    public static func throwAwareAim(cueBall: Vec2, objectBall: Vec2,
+                                     objectDirection: Vec2, side: Double) -> (ghost: Vec2, angle: Double) {
+        let desired = objectDirection.normalized
+        guard desired.length > 0, cueBall.distance(to: objectBall) > Table.ballDiameter else {
+            let ghost = objectBall - desired * Table.ballDiameter
+            return (ghost, angle(of: ghost - cueBall))
+        }
+        var ghost = objectBall - desired * Table.ballDiameter
+        var aim = angle(of: ghost - cueBall)
+        for _ in 0..<2 {
+            let cut = angleBetween(ghost - cueBall, desired)
+            let turned = rotate(desired, by: -throwAngle(cut: cut, side: side))
+            ghost = objectBall - turned * Table.ballDiameter
+            aim = angle(of: ghost - cueBall) - squirtAngle(side: side)
+        }
+        return (ghost, aim)
+    }
+
+    /// The cue angle `throwAwareAim` gives, for a caller that only wants the angle.
+    public static func throwAwareAngle(cueBall: Vec2, objectBall: Vec2,
+                                       objectDirection: Vec2, side: Double) -> Double {
+        throwAwareAim(cueBall: cueBall, objectBall: objectBall,
+                      objectDirection: objectDirection, side: side).angle
+    }
+
+    /// `v` turned by `angle` counter-clockwise.
+    static func rotate(_ v: Vec2, by angle: Double) -> Vec2 {
+        let c = cos(angle), s = sin(angle)
+        return Vec2(v.x * c - v.y * s, v.x * s + v.y * c)
+    }
+
     /// Where a ball is seen **in a cushion**: the point a shot has to be aimed at to reach the ball after
     /// bouncing off that cushion once.
     ///
@@ -531,11 +600,23 @@ public enum ShotGenerator {
                 guard power >= settings.minimumPower, power <= 1.0 else { continue }
 
                 let cutAngle = ShotGeometry.angleBetween(cueDirection, objectDirection)
+                // What the two balls' own friction will do to the object ball: a full ball goes straight,
+                // and a cut is thrown back towards the cue ball's line, so the ghost ball is moved round
+                // the object ball by the throw before the cue is aimed at it. A shot with side on it is
+                // built again for that side when the search tries it — see `ComputerPlayer.tune`.
+                let aim = ShotGeometry.throwAwareAim(cueBall: layout.cue, objectBall: ball,
+                                                     objectDirection: objectDirection, side: 0)
+                // The cue ball's path is what has to be clear, and it is the line to **this** ghost: the
+                // ghost has moved by the throw, and a clearance checked against the old one is a different
+                // shot. See `ShotGeometry.throwAwareAim`.
+                guard ShotGeometry.isOnTheCloth(aim.ghost),
+                      ShotGeometry.isClearPath(from: layout.cue, to: aim.ghost, past: blockers),
+                      ShotGeometry.staysOnTheCloth(from: layout.cue, to: aim.ghost) else { continue }
                 let ease = potEase(cut: cutAngle / settings.maximumCutAngle,
                                    cueDistance: towardsTheGhost.length / diagonal,
                                    objectDistance: toTheHole / diagonal)
                 found.append(ShotCandidate(
-                    shot: Shot(angle: ShotGeometry.angle(of: cueDirection), power: power),
+                    shot: Shot(angle: aim.angle, power: power),
                     intent: .pot(ball: target, pocket: pocket, cut: cutAngle),
                     ease: ease))
             }

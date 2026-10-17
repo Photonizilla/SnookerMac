@@ -1472,9 +1472,9 @@ should be:
 
 | | σ | that potted | fouls per 100 | highest breaks |
 |---|---|---|---|---|
-| Easy | 0.2° | 26% | 9.0 | 8, 15 |
-| Medium | 0.1° | 33% | 4.6 | 9, 21 |
-| Hard | 0.03° | 38% | 2.9 | 24, 10 |
+| Easy | 0.2° | 28% | 11.1 | 9, 8 |
+| Medium | 0.1° | 30% | 7.3 | 15, 8 |
+| Hard | 0.03° | 35% | 2.2 | 11, 14 |
 
 What the check says about the *geometry* is worth reading before believing any single number it prints: it
 plays the escapes the player would have had with the planner as it was, at the same positions, and reports
@@ -1525,6 +1525,23 @@ shots it plays out ahead — three by default — and the search is a **beam** o
 tree over the shots, because three plies of the whole candidate list is the product of the counts at each
 of them.
 
+**A pot is aimed at the ball's own throw.** Two balls meet with friction, and the object ball leaves the
+line of centres by as much as `atan(0.06)` — 3.4° — thrown by the cut and by the cue ball's side spin; the
+cue ball leaves across the cue's line by its **squirt** as well. `ShotGeometry.throwAngle` is the contact
+model on the physics' own terms: the normal impulse `(1+e)·V·cos(cut)/2`, what slides at the touch
+`2.5·side·V − V·sin(cut)`, the friction `min(slip/7, μ·jn)`, and the object ball `atan(jt/jn)` off the line.
+`ShotGeometry.throwAwareAim` turns the ghost ball round the object ball by that throw and points the cue at
+**that** ghost, less the squirt — so the ghost aimed at and the line the path's own clearance is checked
+against are the same one. `ComputerPlayer.tune` builds the aim again for every side spin it tries instead
+of nudging the plain line, and the aim error N(0, σ) is still applied to the result as the shot is played.
+
+Measured against the simulation over cuts to 60° and side spin to ±0.5 (a probe of the two-ball contact, not
+the planner's own arithmetic), the object ball leaves within **0.3° of the line it was aimed at on average**
+— 1.9° at worst, at a 60° cut with +0.3 side. The plain ghost-ball aim is 1.5° out on average and 5° at
+worst. On 269 random pot candidates played twice, once each way, the throw-aware aim potted **57 against
+50**, gaining 28 and losing 21 — so it is a real gain and not a clean sweep, because which side of the
+aim point suits the pocket is not the same thing as which line is physically straight.
+
 A line is a shot played out with the real physics and, if the player is still at the table, the best line
 from there one ply shorter; the turn passing ends it and the position is judged as the opponent's. That is
 what makes it break-building rather than depth for its own sake: only the lines where the ball went in are
@@ -1565,9 +1582,9 @@ difference between them. Three frames apiece from a rack:
 
 | | σ | strokes | that potted | fouls per 100 | highest breaks |
 |---|---|---|---|---|---|
-| Easy | 0.2° | 352 | 26% | 9.7 | 8, 15 |
-| Medium | 0.1° | 234 | 32% | 4.7 | 9, 21 |
-| Hard | 0.03° | 211 | 37% | 4.3 | 24, 10 |
+| Easy | 0.2° | 294 | 27% | 9.5 | 9, 8 |
+| Medium | 0.1° | 238 | 31% | 6.3 | 15, 8 |
+| Hard | 0.03° | 202 | 37% | 4.5 | 11, 14 |
 
 Measured over 25 random positions, with the same errors drawn for both players (`--ai-choices`), and with
 the strokes that potted from `--ai-measure` over 30:
