@@ -147,6 +147,15 @@ public final class ComputerPlayer {
     /// How many of the best lines are followed deeper at each ply. Three plies of the whole candidate list
     /// is the product of the counts at each of them, which is more shots than there is time to play.
     public var beam: Int = 3
+    /// Whether the spin/power/elevation tuning is judged by the **line** a variant leaves — the one-shot
+    /// value is still the prefilter, and the best couple of variants are carried into the line search — or
+    /// by the one-shot value alone.
+    ///
+    /// The line is the better question and the noisier one: the continuation draws its own aim errors, so
+    /// comparing two variants by it compares two different sets of misses as well as two positions. It is
+    /// kept as a switch, and the default is the one-shot value, which is what the measurements found gave
+    /// the better play; `--line-tuning` turns it on.
+    public var tuneAgainstTheLine: Bool = false
     /// How long one decision may take, in seconds. The search is anytime: it stops when the clock does and
     /// plays the best line it has found.
     public var timeBudget: Double = 4.0
@@ -366,10 +375,18 @@ public final class ComputerPlayer {
         // The best few shots are **tuned** — strength, both spins and the lift of the cue, one at a time —
         // and then the best few of those are carried a ply further. Tuning only happens at the top of the
         // tree: further in, the geometry's own strength is good enough to judge a line by.
-        var tuned = scored
+        //
+        // The tuning's own value is the **one-shot** value: what the shot pots and what it leaves. That is
+        // the prefilter, and it is why a variant that is a little worse now but much better two shots on is
+        // not thrown away here: the best few variants each keep a place in the line search below, where
+        // what they are worth is judged **with the shots that follow them**. See `tune`.
+        var tuned: [(choice: Choice, outcome: Outcome, alternatives: [(choice: Choice, outcome: Outcome)])]
+            = scored.map { ($0.choice, $0.outcome, []) }
         if depth == self.depth {
             for (index, entry) in scored.prefix(beam + 1).enumerated() {
-                tuned[index] = tune(entry, from: driver, deadline: deadline, budget: &budget)
+                let result = tune(entry, from: driver, deadline: deadline, budget: &budget)
+                tuned[index] = (result.best.choice, result.best.outcome,
+                                tuneAgainstTheLine ? result.alternatives : [])
             }
             tuned.sort { $0.choice.value > $1.choice.value }
         }
@@ -377,19 +394,25 @@ public final class ComputerPlayer {
             return (tuned[0].choice, tuned[0].choice.value, tuned.map(\.choice))
         }
 
-        var best = tuned[0]
-        for entry in tuned.prefix(beam) where Date() <= deadline {
-            guard entry.outcome.stillAtTheTable, let leaf = entry.outcome.leaf, !leaf.frameOver else {
-                continue
-            }
-            let probe = FrameDriver(playerNames: driver.playerNames)
-            probe.load(leaf)
-            let deeper = search(from: probe, depth: depth - 1, deadline: deadline, budget: &budget)
-            // The shot scores what it scores, and the line is worth what is left on the table after it.
-            let total = 0.9 * Double(entry.outcome.points) + deeper.value
-            if total > best.choice.value {
-                best = (Choice(shot: entry.choice.shot, intent: entry.choice.intent,
-                               value: total, draw: entry.choice.draw), entry.outcome)
+        var best = (choice: tuned[0].choice, outcome: tuned[0].outcome,
+                    value: tuned[0].choice.value)
+        for entry in tuned.prefix(beam) {
+            // The shot that won the tuning, and the variants that were close to it: each is judged by the
+            // line it leaves, not by its own one-shot value alone.
+            var variants = [(choice: entry.choice, outcome: entry.outcome)]
+            variants.append(contentsOf: entry.alternatives)
+            for variant in variants {
+                guard Date() <= deadline else { break }
+                guard variant.outcome.stillAtTheTable, let leaf = variant.outcome.leaf,
+                      !leaf.frameOver else { continue }
+                let probe = FrameDriver(playerNames: driver.playerNames)
+                probe.load(leaf)
+                let deeper = search(from: probe, depth: depth - 1, deadline: deadline, budget: &budget)
+                // The shot scores what it scores, and the line is worth what is left on the table after it.
+                let total = 0.9 * Double(variant.outcome.points) + deeper.value
+                if total > best.value {
+                    best = (variant.choice, variant.outcome, total)
+                }
             }
         }
         return (best.choice, best.choice.value, tuned.map(\.choice))
@@ -441,8 +464,11 @@ public final class ComputerPlayer {
     /// shot that goes in **and leaves something** is a different strength and a different tip from the one
     /// that only goes in.
     private func tune(_ entry: (choice: Choice, outcome: Outcome), from driver: FrameDriver,
-                      deadline: Date, budget: inout Int) -> (choice: Choice, outcome: Outcome) {
+                      deadline: Date, budget: inout Int)
+        -> (best: (choice: Choice, outcome: Outcome),
+            alternatives: [(choice: Choice, outcome: Outcome)]) {
         var best = entry
+        var tried: [(choice: Choice, outcome: Outcome)] = []
         // The spins and the lift come **first** and the strength last, because a shot is one stroke: the tip
         // off centre spends part of the impulse on spin, so a ball struck with screw is slower than the same
         // strength struck plain, and a strength chosen before the spin is a strength for a different shot.
@@ -490,12 +516,21 @@ public final class ComputerPlayer {
             let errors = variants.map { _ in best.choice.draw }
             let outcomes = playOutcomes(variants, errors: errors, in: driver)
             for (index, outcome) in outcomes.enumerated() {
-                guard let outcome, outcome.value > best.choice.value else { continue }
-                best = (Choice(shot: variants[index], intent: best.choice.intent,
-                               value: outcome.value, draw: best.choice.draw), outcome)
+                guard let outcome else { continue }
+                let variant = (Choice(shot: variants[index], intent: best.choice.intent,
+                                      value: outcome.value, draw: best.choice.draw), outcome)
+                tried.append(variant)
+                if outcome.value > best.choice.value { best = variant }
             }
         }
-        return best
+        // The best couple of variants that were not the one kept. They are close enough to be worth judging
+        // by the line they leave — a spin that buys a slightly worse pot now and a much better one after it
+        // is exactly what the line search is for — and they are what `search` carries a ply further.
+        let alternatives = tried
+            .filter { $0.choice.shot != best.choice.shot }
+            .sorted { $0.choice.value > $1.choice.value }
+            .prefix(2)
+        return (best, Array(alternatives))
     }
 
     /// Plays a list of shots out on copies of the frame, all at once, and says what each was worth. Nil
