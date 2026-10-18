@@ -222,4 +222,52 @@ enum LearnedPolicy {
             return nil
         }
     }
+
+    /// The **candidate-conditioned** model: one position and one proposed shot in, a score and the stroke
+    /// out. Every candidate is scored, and the highest-scoring one supplies the shot the network gives —
+    /// the geometry only proposed the lines.
+    static func loadCandidate(path: String, describe: Bool = true)
+        -> ((PolicySituation, [ShotCandidate]) -> Shot?)? {
+        let source = URL(fileURLWithPath: path)
+        do {
+            let compiled = source.pathExtension == "mlmodelc"
+                ? source
+                : try MLModel.compileModel(at: source)
+            let configuration = MLModelConfiguration()
+            configuration.computeUnits = .cpuAndNeuralEngine
+            let model = try MLModel(contentsOf: compiled, configuration: configuration)
+            if describe { LearnedValue.describeThePlan(of: compiled, configuration: configuration) }
+            let shape = [1, NSNumber(value: PolicySituation.candidateCount)]
+            return { situation, candidates in
+                var bestScore = -Double.greatestFiniteMagnitude
+                var bestShot: Shot?
+                for candidate in candidates {
+                    guard let input = try? MLMultiArray(shape: shape, dataType: .float32) else {
+                        continue
+                    }
+                    for (index, value) in situation.candidateValues(candidate).enumerated() {
+                        input[index] = NSNumber(value: value)
+                    }
+                    guard let provider = try? MLDictionaryFeatureProvider(
+                            dictionary: ["position": MLFeatureValue(multiArray: input)]),
+                          let output = try? model.prediction(from: provider),
+                          let choice = output.featureValue(for: "decision")?.multiArrayValue,
+                          choice.count >= 7 else { continue }
+                    let score = choice[0].doubleValue
+                    if score > bestScore {
+                        bestScore = score
+                        bestShot = Shot(angle: atan2(choice[1].doubleValue, choice[2].doubleValue),
+                                        power: choice[3].doubleValue,
+                                        side: choice[4].doubleValue,
+                                        vertical: choice[5].doubleValue,
+                                        elevation: choice[6].doubleValue * maximumLift)
+                    }
+                }
+                return bestShot
+            }
+        } catch {
+            print("could not load the candidate policy from \(path): \(error)")
+            return nil
+        }
+    }
 }

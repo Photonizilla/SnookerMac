@@ -237,6 +237,17 @@ if let index = CommandLine.arguments.firstIndex(of: "--ai-export-all") {
                                           options: ComputerOpponent.Options(CommandLine.arguments)))
 }
 
+// Candidate-conditioned: the geometry's proposals as input rows, the teacher's choice labelled.
+if let index = CommandLine.arguments.firstIndex(of: "--ai-export-candidates") {
+    guard CommandLine.arguments.count > index + 1,
+          !CommandLine.arguments[index + 1].hasPrefix("--") else {
+        print("--ai-export-candidates needs a path to write to")
+        exit(2)
+    }
+    exit(ComputerOpponent.exportCandidates(path: CommandLine.arguments[index + 1],
+                                           options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
 // The policy playing itself, with the Hard player labelling the positions it visits: the states are the
 // network's own, the targets are the strong player's. `--ai-selfplay <path> --policy <model>`.
 if let index = CommandLine.arguments.firstIndex(of: "--ai-selfplay") {

@@ -40,6 +40,44 @@ public struct PolicySituation: Sendable {
         let row = min(placementSide - 1, max(0, Int(point.y / Table.width * Double(placementSide))))
         return row * placementSide + column
     }
+
+    /// How many numbers the network reads for **one proposed shot**: the position (152), the candidate's
+    /// own six numbers and its ease (7), its intent (3), its cut (1), its pocket (6) and its ball (22).
+    public static let candidateCount = PositionFeatures.count + 7 + 3 + 1 + 6 + 22
+
+    /// The network's view of one proposed shot. The geometry's candidate is an **input**: the aim, the
+    /// strength, the cut and the ball are there for the network to score and then replace with its own
+    /// numbers, so that it never has to rediscover the ghost ball from the position alone.
+    public func candidateValues(_ candidate: ShotCandidate) -> [Float] {
+        var values = features.values
+        values.append(contentsOf: [
+            Float(sin(candidate.shot.angle)), Float(cos(candidate.shot.angle)),
+            Float(candidate.shot.power), Float(candidate.shot.side),
+            Float(candidate.shot.vertical),
+            Float(candidate.shot.elevation / (45 * Double.pi / 180)),
+            Float(candidate.ease),
+        ])
+        var intent: [Float] = [0, 0, 0]
+        var cut: Float = 0
+        var pocket = [Float](repeating: 0, count: 6)
+        var ball = [Float](repeating: 0, count: 22)
+        switch candidate.intent {
+        case .pot(let id, let pocketID, let angle):
+            intent[0] = 1
+            cut = Float(angle / Double.pi)
+            if let index = PocketID.allCases.firstIndex(of: pocketID) { pocket[index] = 1 }
+            if id >= 0, id < ball.count { ball[id] = 1 }
+        case .safety(let id):
+            intent[1] = 1
+            if id >= 0, id < ball.count { ball[id] = 1 }
+        case .escape:
+            intent[2] = 1
+        case .neural:
+            break
+        }
+        values += intent + [cut] + pocket + ball
+        return values
+    }
 }
 
 /// The computer player.
@@ -206,6 +244,10 @@ public final class ComputerPlayer {
     /// placed, which colour is nominated, whether a free ball is taken, and the question after a foul — is
     /// the network's. Nothing here proposes a shot or searches for one.
     public var decideEverything: ((PolicySituation) -> Action?)?
+    /// A learned policy **over the geometry's proposals**: the position and one candidate in, a score and
+    /// the whole stroke out. The geometry only supplies the candidates; the network chooses between them
+    /// and gives every number of the chosen shot.
+    public var shotPolicy: ((PolicySituation, [ShotCandidate]) -> Shot?)?
     /// How long one decision may take, in seconds. The search is anytime: it stops when the clock does and
     /// plays the best line it has found.
     public var timeBudget: Double = 4.0
@@ -288,8 +330,30 @@ public final class ComputerPlayer {
         guard !state.frameOver, state.currentPlayer == playerIndex else { return .wait }
         // The pure network: it sees the position and the rules' own list of what is possible, and answers.
         if let decideEverything {
-            if let action = decideEverything(policySituation(for: driver)) { return action }
+            if var action = decideEverything(policySituation(for: driver)) {
+                // The action is the network's; when it is a stroke, the candidate-conditioned network can
+                // supply that stroke, so the administrative heads and the shot can come from separate
+                // models while neither of them is the search.
+                if case .shoot = action, let shotPolicy, driver.canStrike {
+                    let candidates = policyCandidates(for: driver)
+                    if !candidates.isEmpty,
+                       let shot = shotPolicy(policySituation(for: driver), candidates) {
+                        action = .shoot(theShotAsItWillBePlayed(ComputerPlayer.legalShot(shot)))
+                    }
+                }
+                return action
+            }
             return .wait
+        }
+        // A learned policy over the proposed shots: the network chooses the candidate and the stroke.
+        if let shotPolicy, driver.canStrike {
+            let candidates = policyCandidates(for: driver)
+            if !candidates.isEmpty,
+               let shot = shotPolicy(policySituation(for: driver), candidates) {
+                lastPlan = "the network's shot — \(shot.describedForTheLog)"
+                lastIntent = .neural
+                return .shoot(theShotAsItWillBePlayed(ComputerPlayer.legalShot(shot)))
+            }
         }
         // The Black is the only ball left and the striker is more than seven ahead: the frame is theirs
         // if they want it (Section 2 Rule 1(b)).
@@ -395,6 +459,21 @@ public final class ComputerPlayer {
         return PolicySituation(features: PositionFeatures.of(state, aimError: aimError),
                                actions: actions, colours: colours, freeBalls: freeBalls,
                                placements: placements)
+    }
+
+    /// The shots the geometry offers the network to choose between: the pots and safeties that are on, or
+    /// escapes when nothing is. They are **inputs** — nothing here chooses one.
+    public func policyCandidates(for driver: FrameDriver) -> [ShotCandidate] {
+        let layout = BallLayout(state: driver.game.state)
+        let targets = driver.game.legalFirstContacts()
+        guard !targets.isEmpty else { return [] }
+        var candidates = ShotGenerator.pots(layout: layout, targets: targets, settings: settings)
+        if candidates.isEmpty {
+            candidates = ShotGenerator.escapes(layout: layout, targets: targets, settings: settings)
+        } else {
+            candidates += ShotGenerator.safeties(layout: layout, targets: targets, settings: settings)
+        }
+        return Array(candidates.prefix(24))
     }
 
     /// What the network asked for, brought inside what the cue can do. The model is trained on legal shots

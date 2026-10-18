@@ -57,6 +57,7 @@ enum ComputerOpponent {
         let learned = valueFunction(for: options)
         let policy = options.policyPath.flatMap { LearnedPolicy.load(path: $0) }
         let decider = options.deciderPath.flatMap { LearnedPolicy.loadEverything(path: $0) }
+        let shotPolicy = options.candidatePolicyPath.flatMap { LearnedPolicy.loadCandidate(path: $0) }
         let verbose = options.verbose
         var random = SeededRandom(seed: options.seed ^ 0xC0FFEE)
         let unit: () -> Double = { random.unit() }
@@ -74,6 +75,7 @@ enum ComputerOpponent {
                     player.valueOfPosition = learned
                     player.policy = policy
                     player.decideEverything = decider
+                    player.shotPolicy = shotPolicy
                     dress(player, with: options, random: unit)
                 }
             ) { event in
@@ -338,6 +340,103 @@ enum ComputerOpponent {
         BallColor.coloursInAscendingOrder.firstIndex(of: colour) ?? 0
     }
 
+    // MARK: - A policy over the proposed shots
+
+    /// One candidate row: the position plus one proposed shot, whether the teacher chose it, and the
+    /// teacher's stroke — the six numbers the network is asked to replace the candidate's with.
+    struct CandidateSample {
+        var inputs: [Float]
+        var label: Float
+        var shot: [Float]
+    }
+
+    /// `SNOOKERCV1`: count, stride; the inputs, the label and the stroke's six numbers.
+    static func writeCandidateSamples(_ samples: [CandidateSample], to path: String) -> Bool {
+        var data = Data()
+        data.append(contentsOf: Array("SNOOKERCV1".utf8))
+        func put(_ value: UInt32) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        func put(_ value: Float) {
+            withUnsafeBytes(of: value.bitPattern.littleEndian) { data.append(contentsOf: $0) }
+        }
+        put(UInt32(samples.count))
+        put(UInt32(PolicySituation.candidateCount + 1 + 6))
+        for sample in samples {
+            for value in sample.inputs { put(value) }
+            put(sample.label)
+            for value in sample.shot { put(value) }
+        }
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+            return true
+        } catch {
+            print("could not write \(path): \(error)")
+            return false
+        }
+    }
+
+    /// **Supervised**, candidate-conditioned: at every shot the Hard player took, the geometry's proposals
+    /// are recorded as input rows, the one the teacher chose is labelled, and the teacher's stroke is the
+    /// target. The network never sees a position without its candidates.
+    static func exportCandidates(path: String, options: Options) -> Int32 {
+        let start = Date()
+        var samples: [CandidateSample] = []
+        var positions = 0
+        for frame in 0..<options.frames {
+            let driver = FrameDriver(playerNames: ["A", "B"])
+            driver.game.decideTheDraw = { frame % 2 }
+            loadTheStart(of: frame, into: driver, options: options)
+            let teachers = [ComputerPlayer(playerIndex: 0, difficulty: .hard),
+                            ComputerPlayer(playerIndex: 1, difficulty: .hard)]
+            for teacher in teachers {
+                teacher.aimError = 0
+                teacher.decideTheDraw = { frame % 2 }
+            }
+            var decisions = 0
+            while !driver.game.state.frameOver, decisions < 500 {
+                let who = driver.game.state.currentPlayer
+                let teacher = teachers[who]
+                let action = teacher.nextAction(for: driver)
+                if case .shoot(let shot) = action {
+                    let situation = teacher.policySituation(for: driver)
+                    let candidates = teacher.policyCandidates(for: driver)
+                    if !candidates.isEmpty {
+                        var wanted: (ball: Int, pocket: PocketID)?
+                        if let intent = teacher.lastIntent,
+                           case .pot(let ball, let pocket, _) = intent { wanted = (ball, pocket) }
+                        var bestIndex = 0
+                        var bestCost = Double.greatestFiniteMagnitude
+                        for (index, candidate) in candidates.enumerated() {
+                            var cost = ShotGeometry.angleBetween(candidate.shot.angle, shot.angle)
+                            if let wanted, case .pot(let ball, let pocket, _) = candidate.intent {
+                                cost += ball == wanted.ball ? -0.05 : 0.5
+                                if pocket == wanted.pocket { cost -= 0.02 }
+                            }
+                            if cost < bestCost { bestCost = cost; bestIndex = index }
+                        }
+                        let target = policyLabels(shot)
+                        for (index, candidate) in candidates.enumerated() {
+                            samples.append(CandidateSample(
+                                inputs: situation.candidateValues(candidate),
+                                label: index == bestIndex ? 1 : 0, shot: target))
+                        }
+                        positions += 1
+                    }
+                }
+                decisions += 1
+                guard ComputerMatch.apply(action, to: driver) else { break }
+            }
+            if options.verbose {
+                print("  frame \(frame + 1) of \(options.frames): \(positions) positions,"
+                        + " \(samples.count) candidate rows, \(String(format: "%.0f", Date().timeIntervalSince(start))) s")
+            }
+        }
+        guard writeCandidateSamples(samples, to: path) else { return 1 }
+        print("wrote \(samples.count) candidate rows for \(positions) positions to \(path)")
+        return 0
+    }
+
     /// Where a generated frame begins, cycled three ways: the **rack** (the cue ball is in hand, so the
     /// teacher makes a placement decision), a random **mid-frame** layout, and the **colours-only** endgame.
     /// More of the same random layout does not teach the administrative heads anything; a different start
@@ -591,6 +690,9 @@ enum ComputerOpponent {
         /// A learned policy that makes **every** decision — the stroke, the placement, the colour, the
         /// free ball and the answers after a foul: `--decider <model>`.
         var deciderPath: String?
+        /// A learned policy **over the proposed shots**: `--candidate-policy <model>`. The geometry supplies
+        /// the candidates; the network ranks them and gives the stroke.
+        var candidatePolicyPath: String?
         /// How many frames `--ai-export-policy` and `--ai-selfplay` should play.
         var frames = 10
         /// How far off the line the computer's cue goes, in degrees. Nothing means **the difficulty's
@@ -639,6 +741,7 @@ enum ComputerOpponent {
             if arguments.contains("--no-line-tuning") { lineTuning = false }
             policyPath = ComputerOpponent.argument("--policy", in: arguments)
             deciderPath = ComputerOpponent.argument("--decider", in: arguments)
+            candidatePolicyPath = ComputerOpponent.argument("--candidate-policy", in: arguments)
             if let value = ComputerOpponent.argument("--frames", in: arguments), let n = Int(value) {
                 frames = max(1, n)
             }

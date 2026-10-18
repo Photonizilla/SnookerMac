@@ -125,6 +125,33 @@ from 0.03°. The next data change is to seed in-hand states from random layouts 
 that the placement and free-ball heads get hundreds of examples rather than eleven; the shot needs the
 candidate-conditioned or spatial policy described above.
 
+## The candidate-conditioned shot
+
+An **absolute** stroke from a flat vector asks the network to rediscover the ghost ball and to average
+several correct shots into one wrong one. The candidate-conditioned policy gives it a frame of reference:
+the geometry proposes the shots that are on — as **inputs**, never as decisions — and the network reads
+the position plus one candidate's numbers, scores it and gives the stroke.
+
+Each row is 191 numbers: the 152 position features, the candidate's aim, power, spins, lift and ease, its
+intent, cut, pocket and ball. The model answers with a **score** and six stroke numbers. At play every
+candidate is scored, the highest wins, and its stroke is what is played.
+
+```sh
+Snooker --ai-export-candidates AI/Models/candidates.bin --frames 10 --hard
+python3 AI/train_candidate_net.py AI/Models/candidates.bin AI/Models/Candidate1.mlpackage
+xcrun coremlcompiler compile AI/Models/Candidate1.mlpackage AI/Models/
+Snooker --ai-play 1 --hard --candidate-policy AI/Models/Candidate1.mlmodelc
+```
+
+On 2,059 candidate rows from 240 Hard positions, the model ranks the teacher's candidate above the others
+**80%** of the time and its chosen-shot aim error is **5.44°**, against **24.7°** for the absolute policy on
+the same teacher data — a 4.5× improvement from the representation alone. In play it still fouls (5.4° is
+enough to miss), and the tally records **0 shots played out**: the geometry proposed, the network decided.
+
+The two models compose: `--decider` makes every administrative decision, and `--candidate-policy` supplies
+the stroke whenever that decision is "shoot". That is the pure player with the better shot representation,
+and neither the action nor the stroke comes from the search.
+
 ## The Neural Engine
 
 `--ai-model-plan` reports, for every operation, where Core ML **prefers** it and where it **can** run. On
