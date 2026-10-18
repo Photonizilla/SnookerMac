@@ -56,6 +56,7 @@ enum ComputerOpponent {
     static func playFrames(_ count: Int, options: Options) -> Int32 {
         let learned = valueFunction(for: options)
         let policy = options.policyPath.flatMap { LearnedPolicy.load(path: $0) }
+        let decider = options.deciderPath.flatMap { LearnedPolicy.loadEverything(path: $0) }
         let verbose = options.verbose
         var random = SeededRandom(seed: options.seed ^ 0xC0FFEE)
         let unit: () -> Double = { random.unit() }
@@ -72,6 +73,7 @@ enum ComputerOpponent {
                 configure: { player in
                     player.valueOfPosition = learned
                     player.policy = policy
+                    player.decideEverything = decider
                     dress(player, with: options, random: unit)
                 }
             ) { event in
@@ -297,6 +299,196 @@ enum ComputerOpponent {
         return 0
     }
 
+    // MARK: - Every decision, from the network
+
+    /// One sample of the **all-decisions** dataset: what the network sees, the action the Hard player took,
+    /// and the numbers for whichever head that action uses.
+    struct AllPolicySample {
+        var inputs: [Float]
+        var action: Float
+        var shot = [Float](repeating: 0, count: 6)
+        var placement: Float = 0
+        var colour: Float = 0
+        var points: Float = 0
+        var foul: Float = 0
+        var kept: Float = 0
+        var won: Float = 0
+    }
+
+    /// The action classes, in the order `PolicySituation.actions` uses them.
+    static func policyAction(_ action: ComputerPlayer.Action)
+        -> (kind: Int, shot: [Float], placement: Int, colour: Int)? {
+        let noShot = [Float](repeating: 0, count: 6)
+        switch action {
+        case .shoot(let shot): return (0, policyLabels(shot), 0, 0)
+        case .placeCueBall(let point): return (1, noShot, PolicySituation.placementCell(for: point), 0)
+        case .nominateColour(let colour): return (2, noShot, 0, colourIndex(colour))
+        case .takeAFreeBall(let colour): return (3, noShot, 0, colourIndex(colour))
+        case .declineTheFreeBall: return (4, noShot, 0, 0)
+        case .playFromHere: return (5, noShot, 0, 0)
+        case .askTheOffenderToPlayAgain: return (6, noShot, 0, 0)
+        case .replaceTheBalls: return (7, noShot, 0, 0)
+        case .claimTheFrame: return (8, noShot, 0, 0)
+        case .reRack: return (9, noShot, 0, 0)
+        case .wait: return nil
+        }
+    }
+
+    static func colourIndex(_ colour: BallColor) -> Int {
+        BallColor.coloursInAscendingOrder.firstIndex(of: colour) ?? 0
+    }
+
+    /// `SNOOKERPA1`: count, stride; for every decision the 240 inputs, the action class, the stroke's six
+    /// labels, the placement cell and the colour, then the four outcomes.
+    static func writeAllPolicySamples(_ samples: [AllPolicySample], to path: String) -> Bool {
+        var data = Data()
+        data.append(contentsOf: Array("SNOOKERPA1".utf8))
+        func put(_ value: UInt32) {
+            withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) }
+        }
+        func put(_ value: Float) {
+            withUnsafeBytes(of: value.bitPattern.littleEndian) { data.append(contentsOf: $0) }
+        }
+        put(UInt32(samples.count))
+        put(UInt32(PolicySituation.count + 1 + 6 + 1 + 1 + 4))
+        for sample in samples {
+            for value in sample.inputs { put(value) }
+            put(sample.action)
+            for value in sample.shot { put(value) }
+            put(sample.placement)
+            put(sample.colour)
+            for value in [sample.points, sample.foul, sample.kept, sample.won] { put(value) }
+        }
+        do {
+            try data.write(to: URL(fileURLWithPath: path))
+            return true
+        } catch {
+            print("could not write \(path): \(error)")
+            return false
+        }
+    }
+
+    /// **Supervised**, every decision: the Hard player's own choices — shots, placements, colours, free
+    /// balls and the answers after a foul — at the positions it made them in.
+    static func exportEverything(path: String, options: Options) -> Int32 {
+        let start = Date()
+        var samples: [AllPolicySample] = []
+        for frame in 0..<options.frames {
+            let driver = FrameDriver(playerNames: ["A", "B"])
+            driver.game.decideTheDraw = { frame % 2 }
+            let layout = PositionGenerator.positions(count: 1, reds: min(15, options.reds),
+                                                     seed: options.seed &+ UInt64(frame) &* 7919)[0]
+            driver.load(layout)
+            let teachers = [ComputerPlayer(playerIndex: 0, difficulty: .hard),
+                            ComputerPlayer(playerIndex: 1, difficulty: .hard)]
+            for teacher in teachers {
+                teacher.aimError = 0
+                teacher.decideTheDraw = { frame % 2 }
+            }
+            var frameSamples: [(index: Int, who: Int)] = []
+            var decisions = 0
+            while !driver.game.state.frameOver, decisions < 800 {
+                let who = driver.game.state.currentPlayer
+                let situation = teachers[who].policySituation(for: driver)
+                let action = teachers[who].nextAction(for: driver)
+                guard let label = policyAction(action) else {
+                    if options.verbose { print("  stopped: the teacher could not decide") }
+                    break
+                }
+                samples.append(AllPolicySample(inputs: situation.values, action: Float(label.kind),
+                                               shot: label.shot,
+                                               placement: Float(label.placement),
+                                               colour: Float(label.colour)))
+                frameSamples.append((samples.count - 1, who))
+                decisions += 1
+                guard ComputerMatch.apply(action, to: driver) else {
+                    if options.verbose { print("  stopped: \(action) was refused") }
+                    break
+                }
+                if case .shoot = action, let index = frameSamples.last?.index {
+                    samples[index].points = Float(driver.lastResult?.pointsScored ?? 0)
+                    samples[index].foul = driver.lastResult?.foul != nil ? 1 : 0
+                    samples[index].kept = driver.game.state.currentPlayer == who ? 1 : 0
+                }
+            }
+            if let winner = driver.game.state.winner {
+                for sample in frameSamples where sample.who == winner { samples[sample.index].won = 1 }
+            }
+            if options.verbose {
+                print("  frame \(frame + 1) of \(options.frames): \(decisions) decisions,"
+                        + " \(driver.game.state.scores[0])–\(driver.game.state.scores[1]),"
+                        + " \(samples.count) samples, \(String(format: "%.0f", Date().timeIntervalSince(start))) s")
+            }
+        }
+        guard writeAllPolicySamples(samples, to: path) else { return 1 }
+        print("wrote \(samples.count) all-decision samples to \(path)")
+        return 0
+    }
+
+    /// **Self-play**, every decision: the network plays itself and the Hard player labels each position the
+    /// network actually visits, including the administrative ones.
+    static func selfPlayEverything(path: String, options: Options) -> Int32 {
+        guard let policyPath = options.policyPath,
+              let decision = LearnedPolicy.loadEverything(path: policyPath) else {
+            print("--ai-selfplay-all needs --policy <an all-decisions model that loads>")
+            return 2
+        }
+        let start = Date()
+        var samples: [AllPolicySample] = []
+        for frame in 0..<options.frames {
+            let driver = FrameDriver(playerNames: ["A", "B"])
+            driver.game.decideTheDraw = { frame % 2 }
+            let layout = PositionGenerator.positions(count: 1, reds: min(15, options.reds),
+                                                     seed: options.seed &+ UInt64(frame) &* 7919)[0]
+            driver.load(layout)
+            let learners = [ComputerPlayer(playerIndex: 0, difficulty: .hard),
+                            ComputerPlayer(playerIndex: 1, difficulty: .hard)]
+            let teachers = [ComputerPlayer(playerIndex: 0, difficulty: .hard),
+                            ComputerPlayer(playerIndex: 1, difficulty: .hard)]
+            for player in learners {
+                player.decideEverything = decision
+                player.aimError = options.cueAction
+                player.decideTheDraw = { frame % 2 }
+            }
+            for teacher in teachers {
+                teacher.aimError = 0
+                teacher.decideTheDraw = { frame % 2 }
+            }
+            var frameSamples: [(index: Int, who: Int)] = []
+            var decisions = 0
+            while !driver.game.state.frameOver, decisions < 800 {
+                let who = driver.game.state.currentPlayer
+                let situation = teachers[who].policySituation(for: driver)
+                let action = learners[who].nextAction(for: driver)
+                if let label = policyAction(teachers[who].nextAction(for: driver)) {
+                    samples.append(AllPolicySample(inputs: situation.values,
+                                                   action: Float(label.kind), shot: label.shot,
+                                                   placement: Float(label.placement),
+                                                   colour: Float(label.colour)))
+                    frameSamples.append((samples.count - 1, who))
+                }
+                decisions += 1
+                guard ComputerMatch.apply(action, to: driver) else { break }
+                if case .shoot = action, let index = frameSamples.last?.index {
+                    samples[index].points = Float(driver.lastResult?.pointsScored ?? 0)
+                    samples[index].foul = driver.lastResult?.foul != nil ? 1 : 0
+                    samples[index].kept = driver.game.state.currentPlayer == who ? 1 : 0
+                }
+            }
+            if let winner = driver.game.state.winner {
+                for sample in frameSamples where sample.who == winner { samples[sample.index].won = 1 }
+            }
+            if options.verbose {
+                print("  frame \(frame + 1) of \(options.frames): \(decisions) decisions,"
+                        + " \(driver.game.state.scores[0])–\(driver.game.state.scores[1]),"
+                        + " \(samples.count) samples, \(String(format: "%.0f", Date().timeIntervalSince(start))) s")
+            }
+        }
+        guard writeAllPolicySamples(samples, to: path) else { return 1 }
+        print("wrote \(samples.count) self-play all-decision samples to \(path)")
+        return 0
+    }
+
     // MARK: - What thinking costs
 
     /// A position as it is written down: what it looks like, what the player's own arithmetic made of it,
@@ -368,6 +560,9 @@ enum ComputerOpponent {
         /// A learned policy to play the stroke with: `--policy <model>`. Every parameter of the shot comes
         /// out of the network; without it the search decides, as before.
         var policyPath: String?
+        /// A learned policy that makes **every** decision — the stroke, the placement, the colour, the
+        /// free ball and the answers after a foul: `--decider <model>`.
+        var deciderPath: String?
         /// How many frames `--ai-export-policy` and `--ai-selfplay` should play.
         var frames = 10
         /// How far off the line the computer's cue goes, in degrees. Nothing means **the difficulty's
@@ -415,6 +610,7 @@ enum ComputerOpponent {
             if arguments.contains("--line-tuning") { lineTuning = true }
             if arguments.contains("--no-line-tuning") { lineTuning = false }
             policyPath = ComputerOpponent.argument("--policy", in: arguments)
+            deciderPath = ComputerOpponent.argument("--decider", in: arguments)
             if let value = ComputerOpponent.argument("--frames", in: arguments), let n = Int(value) {
                 frames = max(1, n)
             }

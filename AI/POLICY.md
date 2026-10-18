@@ -82,6 +82,38 @@ The next architecture should give the network the geometry the player already co
   so 100 frames is a quarter-hour and roughly 5,000 shots; a candidate-conditioned policy should need far
   fewer than the absolute one.
 
+## The pure player: every decision from the network
+
+`--decider <model>` installs a player with **no geometry and no search**. It is given
+`PolicySituation` — the 152 `PositionFeatures` plus the rules' own masks: 12 possible actions, the 6
+colours, the 6 free-ball nominations and the 64 placement cells — and answers with 88 numbers: the twelve
+action logits, the six stroke labels, the sixty-four placement logits and the six colour logits. The masks
+are applied to the logits, so the action that comes out is one the rules allow; the choice is the
+network's. The administrative decisions are network heads too: place the cue ball, nominate a colour, take
+or decline a free ball, play from here, ask the offender, replace the balls, claim the frame, re-rack.
+
+```sh
+Snooker --ai-export-all AI/Models/all.bin --frames 12 --hard --reds 10
+python3 AI/train_decider_net.py AI/Models/all.bin AI/Models/Decider1.mlpackage --epochs 200
+xcrun coremlcompiler compile AI/Models/Decider1.mlpackage AI/Models/
+Snooker --ai-play 1 --hard --decider AI/Models/Decider1.mlmodelc
+Snooker --ai-selfplay-all AI/Models/all_selfplay.bin --policy AI/Models/Decider1.mlmodelc --frames 10
+```
+
+The first all-decisions model was trained on **475 decisions** from 8 Hard frames: 351 shots (74%), 97
+colour nominations (20%), 12 replacements (3%), 7 claims, 4 placements, 2 re-racks. Held out it got **99%
+of actions** right — the classes are dominated by "shoot" — **67% of colours**, and a **36.6° mean aim
+error**. In play it makes every decision itself and records **zero shots played out**: three strokes, three
+fouls, and the log shows the other player's network deciding `replaceTheBalls`. It is a working pure
+player, not a good one.
+
+What the dataset is still missing is the part that matters for the administrative head: four placement
+examples and no free-ball examples, because the Hard teacher starts from random layouts where it rarely
+has the cue ball in hand and almost never takes a free ball. Starting frames from the rack, and from
+positions with the cue ball in hand and a free ball offered, is the next data change; the shot's precision
+is the same problem as the shot-only policy below — it needs a candidate-conditioned or spatial
+representation.
+
 ## The Neural Engine
 
 `--ai-model-plan` reports, for every operation, where Core ML **prefers** it and where it **can** run. On

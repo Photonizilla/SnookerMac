@@ -148,4 +148,78 @@ enum LearnedPolicy {
             return nil
         }
     }
+
+    /// The **all-decisions** model: one Core ML program whose output is the twelve action logits, the six
+    /// stroke numbers, the sixty-four placement logits and the six colour logits — 88 numbers. The masks in
+    /// the situation are applied to the logits here, so what comes back is an action the rules allow, with
+    /// every number of the stroke the network's.
+    static func loadEverything(path: String, describe: Bool = true)
+        -> ((PolicySituation) -> ComputerPlayer.Action?)? {
+        let source = URL(fileURLWithPath: path)
+        do {
+            let compiled = source.pathExtension == "mlmodelc"
+                ? source
+                : try MLModel.compileModel(at: source)
+            let configuration = MLModelConfiguration()
+            configuration.computeUnits = .cpuAndNeuralEngine
+            let model = try MLModel(contentsOf: compiled, configuration: configuration)
+            if describe { LearnedValue.describeThePlan(of: compiled, configuration: configuration) }
+            let shape = [1, NSNumber(value: PolicySituation.count)]
+            let colours = BallColor.coloursInAscendingOrder
+            return { situation in
+                guard let input = try? MLMultiArray(shape: shape, dataType: .float32) else { return nil }
+                let values = situation.values
+                for (index, value) in values.enumerated() { input[index] = NSNumber(value: value) }
+                guard let provider = try? MLDictionaryFeatureProvider(
+                        dictionary: ["position": MLFeatureValue(multiArray: input)]),
+                      let output = try? model.prediction(from: provider),
+                      let decision = output.featureValue(for: "decision")?.multiArrayValue,
+                      decision.count >= 88 else { return nil }
+                func numbers(from start: Int, count: Int) -> [Double] {
+                    (0..<count).map { decision[start + $0].doubleValue }
+                }
+                func best(_ logits: [Double], maskedBy mask: [Float]) -> Int? {
+                    var bestIndex: Int?
+                    var bestValue = -Double.greatestFiniteMagnitude
+                    for (index, value) in logits.enumerated() where index < mask.count && mask[index] > 0 {
+                        if value > bestValue { bestValue = value; bestIndex = index }
+                    }
+                    return bestIndex
+                }
+                let kind = best(numbers(from: 0, count: PolicySituation.actionCount).map { $0 },
+                                maskedBy: situation.actions)
+                guard let kind else { return nil }
+                let stroke = numbers(from: PolicySituation.actionCount, count: 6)
+                guard stroke.count == 6 else { return nil }
+                let shot = Shot(angle: atan2(stroke[0], stroke[1]),
+                                power: stroke[2], side: stroke[3], vertical: stroke[4],
+                                elevation: stroke[5] * maximumLift)
+                switch kind {
+                case 0:
+                    return .shoot(ComputerPlayer.legalShot(shot))
+                case 1:
+                    let placementStart = PolicySituation.actionCount + 6
+                    let cells = numbers(from: placementStart, count: PolicySituation.placementCount)
+                    guard let cell = best(cells, maskedBy: situation.placements) else { return nil }
+                    return .placeCueBall(PolicySituation.placementPoint(cell))
+                case 2, 3:
+                    let colourStart = PolicySituation.actionCount + 6 + PolicySituation.placementCount
+                    let mask = kind == 3 ? situation.freeBalls : situation.colours
+                    guard let index = best(numbers(from: colourStart, count: colours.count),
+                                           maskedBy: mask), index < colours.count else { return nil }
+                    return kind == 3 ? .takeAFreeBall(colours[index]) : .nominateColour(colours[index])
+                case 4: return .declineTheFreeBall
+                case 5: return .playFromHere
+                case 6: return .askTheOffenderToPlayAgain
+                case 7: return .replaceTheBalls
+                case 8: return .claimTheFrame
+                case 9: return .reRack
+                default: return nil
+                }
+            }
+        } catch {
+            print("could not load the all-decisions policy from \(path): \(error)")
+            return nil
+        }
+    }
 }

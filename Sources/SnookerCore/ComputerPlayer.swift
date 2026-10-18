@@ -1,6 +1,47 @@
 import Foundation
 import Dispatch
 
+/// What a **pure** network player is given when it has to choose: the position's features, and which of the
+/// twelve actions, six colours and sixty-four placement cells the rules allow in this position. The network
+/// answers with the action — including the whole stroke — and nothing in the player proposes a shot or
+/// searches for one. The masks are the rules' own statement of what is possible; the *choice* is the
+/// network's.
+public struct PolicySituation: Sendable {
+    public static let actionCount = 12
+    public static let colourCount = 6
+    public static let placementSide = 8
+    public static let placementCount = placementSide * placementSide
+    public static let count = PositionFeatures.count + actionCount + colourCount + colourCount
+        + placementCount
+
+    public var features: PositionFeatures
+    /// One per action: 0 shoot, 1 place, 2 nominate, 3 free ball, 4 decline, 5 play from here,
+    /// 6 ask the offender, 7 replace the balls, 8 claim the frame, 9 re-rack.
+    public var actions: [Float]
+    public var colours: [Float]
+    public var freeBalls: [Float]
+    public var placements: [Float]
+
+    /// What the network reads: the features and the masks, in one fixed-length vector.
+    public var values: [Float] {
+        features.values + actions + colours + freeBalls + placements
+    }
+
+    /// The centre of a placement cell, in the table's own millimetres.
+    public static func placementPoint(_ index: Int) -> Vec2 {
+        let column = index % placementSide, row = index / placementSide
+        return Vec2((Double(column) + 0.5) / Double(placementSide) * Table.length,
+                    (Double(row) + 0.5) / Double(placementSide) * Table.width)
+    }
+
+    /// The cell nearest to a point: what a teacher's placement is recorded as.
+    public static func placementCell(for point: Vec2) -> Int {
+        let column = min(placementSide - 1, max(0, Int(point.x / Table.length * Double(placementSide))))
+        let row = min(placementSide - 1, max(0, Int(point.y / Table.width * Double(placementSide))))
+        return row * placementSide + column
+    }
+}
+
 /// The computer player.
 ///
 /// It does two things: it picks a stroke, and it answers the questions the rules ask. Picking a stroke
@@ -161,6 +202,10 @@ public final class ComputerPlayer {
     /// what the network says is played, with the cue action's own error applied as it is for any stroke.
     /// A model that cannot answer falls back to the search rather than stalling the frame.
     public var policy: ((PositionFeatures) -> Shot?)?
+    /// The **pure** neural player, when one is installed: every decision — the stroke, where a cue ball is
+    /// placed, which colour is nominated, whether a free ball is taken, and the question after a foul — is
+    /// the network's. Nothing here proposes a shot or searches for one.
+    public var decideEverything: ((PolicySituation) -> Action?)?
     /// How long one decision may take, in seconds. The search is anytime: it stops when the clock does and
     /// plays the best line it has found.
     public var timeBudget: Double = 4.0
@@ -241,6 +286,11 @@ public final class ComputerPlayer {
     public func nextAction(for driver: FrameDriver) -> Action {
         let state = driver.game.state
         guard !state.frameOver, state.currentPlayer == playerIndex else { return .wait }
+        // The pure network: it sees the position and the rules' own list of what is possible, and answers.
+        if let decideEverything {
+            if let action = decideEverything(policySituation(for: driver)) { return action }
+            return .wait
+        }
         // The Black is the only ball left and the striker is more than seven ahead: the frame is theirs
         // if they want it (Section 2 Rule 1(b)).
         if driver.canClaimTheFrame { return .claimTheFrame }
@@ -297,10 +347,60 @@ public final class ComputerPlayer {
         return .wait
     }
 
+    /// Which actions the rules allow, and which colours and placement cells, for the network to choose
+    /// from. This and the position's own features are the whole of what a pure network player is told.
+    public func policySituation(for driver: FrameDriver) -> PolicySituation {
+        let state = driver.game.state
+        var actions = [Float](repeating: 0, count: PolicySituation.actionCount)
+        var colours = [Float](repeating: 0, count: PolicySituation.colourCount)
+        var freeBalls = [Float](repeating: 0, count: PolicySituation.colourCount)
+        var placements = [Float](repeating: 0, count: PolicySituation.placementCount)
+        let order = BallColor.coloursInAscendingOrder
+
+        if let pending = state.pending {
+            switch pending {
+            case .placeCueBallInD, .placeCueBallAnywhere:
+                actions[1] = 1
+                var inTheD = false
+                if case .placeCueBallInD = pending { inTheD = true }
+                for index in 0..<PolicySituation.placementCount {
+                    let point = PolicySituation.placementPoint(index)
+                    if inTheD, !Table.isInsideD(point) { continue }
+                    if driver.game.isFreePosition(point, ignoring: BallID.cue) { placements[index] = 1 }
+                }
+            case .nominateColour(let options):
+                actions[2] = 1
+                for colour in options where order.contains(colour) {
+                    colours[order.firstIndex(of: colour)!] = 1
+                }
+            case .nominateFreeBall(let options):
+                actions[3] = 1
+                actions[4] = 1
+                for colour in options where order.contains(colour) {
+                    freeBalls[order.firstIndex(of: colour)!] = 1
+                }
+            case .afterFoul(let decision):
+                actions[5] = 1
+                actions[6] = 1
+                if decision.canRequestOriginalPosition { actions[7] = 1 }
+            case .afterMiss(let decision):
+                actions[5] = 1
+                actions[6] = 1
+                if decision.canRequestOriginalPosition { actions[7] = 1 }
+            }
+        }
+        if driver.canStrike { actions[0] = 1 }
+        if driver.canClaimTheFrame { actions[8] = 1 }
+        if decisionsInOnePosition >= 6 { actions[9] = 1 }
+        return PolicySituation(features: PositionFeatures.of(state, aimError: aimError),
+                               actions: actions, colours: colours, freeBalls: freeBalls,
+                               placements: placements)
+    }
+
     /// What the network asked for, brought inside what the cue can do. The model is trained on legal shots
     /// but has no way of promising one, and a network answer is not a licence to play a shot the game
     /// cannot: a power of nothing is not a stroke, and the tip cannot go past its own face.
-    static func legalShot(_ shot: Shot) -> Shot {
+    public static func legalShot(_ shot: Shot) -> Shot {
         var legal = shot
         legal.power = min(1, max(0.03, shot.power))
         legal.side = min(1, max(-1, shot.side))

@@ -225,6 +225,18 @@ if let index = CommandLine.arguments.firstIndex(of: "--ai-export-policy") {
                                        options: ComputerOpponent.Options(CommandLine.arguments)))
 }
 
+// The same, for a player that makes **every** decision from the network: shots and placements, colours and
+// free balls, and the answers after a foul.
+if let index = CommandLine.arguments.firstIndex(of: "--ai-export-all") {
+    guard CommandLine.arguments.count > index + 1,
+          !CommandLine.arguments[index + 1].hasPrefix("--") else {
+        print("--ai-export-all needs a path to write to")
+        exit(2)
+    }
+    exit(ComputerOpponent.exportEverything(path: CommandLine.arguments[index + 1],
+                                          options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
 // The policy playing itself, with the Hard player labelling the positions it visits: the states are the
 // network's own, the targets are the strong player's. `--ai-selfplay <path> --policy <model>`.
 if let index = CommandLine.arguments.firstIndex(of: "--ai-selfplay") {
@@ -235,6 +247,16 @@ if let index = CommandLine.arguments.firstIndex(of: "--ai-selfplay") {
     }
     exit(ComputerOpponent.selfPlay(path: CommandLine.arguments[index + 1],
                                    options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+if let index = CommandLine.arguments.firstIndex(of: "--ai-selfplay-all") {
+    guard CommandLine.arguments.count > index + 1,
+          !CommandLine.arguments[index + 1].hasPrefix("--") else {
+        print("--ai-selfplay-all needs a path to write to")
+        exit(2)
+    }
+    exit(ComputerOpponent.selfPlayEverything(path: CommandLine.arguments[index + 1],
+                                             options: ComputerOpponent.Options(CommandLine.arguments)))
 }
 
 if let index = CommandLine.arguments.firstIndex(of: "--ai-export") {
