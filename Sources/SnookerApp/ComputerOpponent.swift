@@ -338,6 +338,38 @@ enum ComputerOpponent {
         BallColor.coloursInAscendingOrder.firstIndex(of: colour) ?? 0
     }
 
+    /// Where a generated frame begins, cycled three ways: the **rack** (the cue ball is in hand, so the
+    /// teacher makes a placement decision), a random **mid-frame** layout, and the **colours-only** endgame.
+    /// More of the same random layout does not teach the administrative heads anything; a different start
+    /// does.
+    static func loadTheStart(of frame: Int, into driver: FrameDriver, options: Options) {
+        switch frame % 3 {
+        case 0:
+            return                                    // the driver's own rack: cue ball in hand
+        case 1:
+            driver.load(PositionGenerator.positions(count: 1, reds: min(15, options.reds),
+                                                     seed: options.seed &+ UInt64(frame) &* 7919)[0])
+        default:
+            var state = GameState(playerNames: ["A", "B"], redCount: min(15, options.reds))
+            let spots: [(BallColor, Vec2)] = [(.yellow, Table.yellowSpot), (.green, Table.greenSpot),
+                                              (.brown, Table.brownSpot), (.blue, Table.blueSpot),
+                                              (.pink, Table.pinkSpot), (.black, Table.blackSpot)]
+            var onTable: Set<Int> = [BallID.cue]
+            for (colour, spot) in spots {
+                guard let id = BallID.colourID(colour) else { continue }
+                onTable.insert(id)
+                state.ballPositions[id] = spot
+            }
+            state.ballsOnTable = onTable
+            state.ballPositions[BallID.cue] = Vec2(Table.baulkLineX - 200, Table.centreY)
+            state.redsRemaining = 0
+            state.ballOn = .colourOfSequence(.yellow)
+            state.cueBallInHand = false
+            state.pending = nil
+            driver.load(state)
+        }
+    }
+
     /// `SNOOKERPA1`: count, stride; for every decision the 240 inputs, the action class, the stroke's six
     /// labels, the placement cell and the colour, then the four outcomes.
     static func writeAllPolicySamples(_ samples: [AllPolicySample], to path: String) -> Bool {
@@ -376,9 +408,7 @@ enum ComputerOpponent {
         for frame in 0..<options.frames {
             let driver = FrameDriver(playerNames: ["A", "B"])
             driver.game.decideTheDraw = { frame % 2 }
-            let layout = PositionGenerator.positions(count: 1, reds: min(15, options.reds),
-                                                     seed: options.seed &+ UInt64(frame) &* 7919)[0]
-            driver.load(layout)
+            loadTheStart(of: frame, into: driver, options: options)
             let teachers = [ComputerPlayer(playerIndex: 0, difficulty: .hard),
                             ComputerPlayer(playerIndex: 1, difficulty: .hard)]
             for teacher in teachers {
@@ -438,9 +468,7 @@ enum ComputerOpponent {
         for frame in 0..<options.frames {
             let driver = FrameDriver(playerNames: ["A", "B"])
             driver.game.decideTheDraw = { frame % 2 }
-            let layout = PositionGenerator.positions(count: 1, reds: min(15, options.reds),
-                                                     seed: options.seed &+ UInt64(frame) &* 7919)[0]
-            driver.load(layout)
+            loadTheStart(of: frame, into: driver, options: options)
             let learners = [ComputerPlayer(playerIndex: 0, difficulty: .hard),
                             ComputerPlayer(playerIndex: 1, difficulty: .hard)]
             let teachers = [ComputerPlayer(playerIndex: 0, difficulty: .hard),

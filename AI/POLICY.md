@@ -100,19 +100,30 @@ Snooker --ai-play 1 --hard --decider AI/Models/Decider1.mlmodelc
 Snooker --ai-selfplay-all AI/Models/all_selfplay.bin --policy AI/Models/Decider1.mlmodelc --frames 10
 ```
 
-The first all-decisions model was trained on **475 decisions** from 8 Hard frames: 351 shots (74%), 97
-colour nominations (20%), 12 replacements (3%), 7 claims, 4 placements, 2 re-racks. Held out it got **99%
-of actions** right — the classes are dominated by "shoot" — **67% of colours**, and a **36.6° mean aim
-error**. In play it makes every decision itself and records **zero shots played out**: three strokes, three
-fouls, and the log shows the other player's network deciding `replaceTheBalls`. It is a working pure
-player, not a good one.
+The first all-decisions model was trained on **475 decisions** from 8 Hard frames and scored 99% of actions
+(the classes are dominated by "shoot"), 67% of colours and a **36.6° mean aim error**. Doubling the data to
+**1,046 decisions** — 18 more frames, every third one starting from the rack or from the colours-only
+endgame — moved the held-out shot aim to **24.7°** and the colour accuracy to **96%**. More data of the
+right kind is exactly what moves it:
 
-What the dataset is still missing is the part that matters for the administrative head: four placement
-examples and no free-ball examples, because the Hard teacher starts from random layouts where it rarely
-has the cue ball in hand and almost never takes a free ball. Starting frames from the rack, and from
-positions with the cue ball in hand and a free ball offered, is the next data change; the shot's precision
-is the same problem as the shot-only policy below — it needs a candidate-conditioned or spatial
-representation.
+| | 475 decisions | 1,046 decisions |
+|---|---|---|
+| actions | 99% | 99% |
+| colours | 67% | **96%** |
+| shot aim | 36.6° | **24.7°** |
+| placement | — (4 examples) | 0% (11 examples) |
+
+In play it makes every decision itself and records **zero shots played out**. It is a working pure player,
+not a good one: three strokes, three fouls, and the log shows the other player's network deciding
+`replaceTheBalls`.
+
+The labels are not the limit — the Hard teacher can make as many as the clock allows: about **4.6
+decisions a second** (571 decisions in 125 s), so 10,000 decisions is roughly 35 minutes and 100,000 about
+six hours. The limits are two: the **mix of starting states**, because 8 random mid-frame layouts gave 4
+placements and no free balls, and the **representation of the stroke**, which is why 24.7° is still far
+from 0.03°. The next data change is to seed in-hand states from random layouts and to offer free balls, so
+that the placement and free-ball heads get hundreds of examples rather than eleven; the shot needs the
+candidate-conditioned or spatial policy described above.
 
 ## The Neural Engine
 
