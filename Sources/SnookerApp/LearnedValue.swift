@@ -55,6 +55,7 @@ enum LearnedValue {
     static func describeThePlan(of url: URL, configuration: MLModelConfiguration) {
         guard #available(macOS 14.4, *) else { return }
         var counts: [String: Int] = [:]
+        var allowed: [String: Int] = [:]
         let done = DispatchSemaphore(value: 0)
         Task {
             defer { done.signal() }
@@ -63,11 +64,22 @@ enum LearnedValue {
                 guard case .program(let program) = plan.modelStructure,
                       let main = program.functions["main"] else { return }
                 for operation in main.block.operations {
-                    switch plan.deviceUsage(for: operation)?.preferred {
+                    let usage = plan.deviceUsage(for: operation)
+                    switch usage?.preferred {
                     case .neuralEngine: counts["the Neural Engine", default: 0] += 1
                     case .gpu: counts["the GPU", default: 0] += 1
                     case .cpu: counts["the CPU", default: 0] += 1
                     default: counts["nothing", default: 0] += 1
+                    }
+                    // What the operation **could** run on, which is the other half of the answer: a
+                    // preferred CPU with the Neural Engine supported is a cost decision, not a refusal.
+                    for device in usage?.supported ?? [] {
+                        switch device {
+                        case .neuralEngine: allowed["the Neural Engine", default: 0] += 1
+                        case .gpu: allowed["the GPU", default: 0] += 1
+                        case .cpu: allowed["the CPU", default: 0] += 1
+                        @unknown default: allowed["something else", default: 0] += 1
+                        }
                     }
                 }
             } catch {
@@ -81,7 +93,10 @@ enum LearnedValue {
         let summary = counts.sorted { $0.value > $1.value }
             .map { "\($0.value) on \($0.key)" }
             .joined(separator: ", ")
-        print("the model: \(summary)")
+        let support = allowed.sorted { $0.value > $1.value }
+            .map { "\($0.value) can run on \($0.key)" }
+            .joined(separator: ", ")
+        print("the model: \(summary)" + (support.isEmpty ? "" : "; \(support)"))
     }
 
 }

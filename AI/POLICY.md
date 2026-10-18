@@ -84,9 +84,31 @@ The next architecture should give the network the geometry the player already co
 
 ## The Neural Engine
 
-The network is written as 1×1 convolutions — dense layers in the shape Core ML hands to the Neural Engine —
-and every call reports the compute plan. On this Mac the plan for `Policy1` was **55 operations
-unassigned and 23 on the CPU**: the same answer the value network gave. The model is small and its input is
-one position at a time, and Core ML does not put it on the Neural Engine. A batch of positions, or a much
-larger spatial trunk, is what the engine wants; the player needs one shot at a time, so the honest answer
-is that the ANE is not being used yet.
+`--ai-model-plan` reports, for every operation, where Core ML **prefers** it and where it **can** run. On
+this M1 Pro (macOS 27.0.1), with `.cpuAndNeuralEngine`, float16 and static shapes:
+
+| model | preferred | can run on |
+|---|---|---|
+| the policy: 152 → 256×3, batch 1 | 12 CPU | 11 Neural Engine |
+| the same, batch 8 and batch 32 | 12 CPU | 11 Neural Engine |
+| 152 → 1024×3, batch 32 | **11 Neural Engine, 1 CPU** | 11 Neural Engine |
+| spatial 8×16×32, 32/64 channels, batch 1 | 10 CPU | 9 Neural Engine |
+| the same, batch 8 | **9 Neural Engine, 1 CPU** | 9 Neural Engine |
+| spatial 3×64×128, 64/128 channels, batch 1 | **11 Neural Engine, 1 CPU** | 11 Neural Engine |
+
+Three things decide it:
+
+1. **The process has to be allowed to use it.** The same models read *all CPU* when the harness is run
+   inside the Codex sandbox, and move to the Neural Engine when it is run normally. A sandbox that denies
+   the engine's device access makes the planner choose the CPU for everything.
+2. **The work per layer has to be worth the dispatch.** A position is a 152-float vector: one "pixel" 152
+   channels wide, so a 1×1 convolution over it is a tiny matrix multiply. 256 wide at batch 32 is still
+   CPU; 1024 wide at batch 32, or a real 2D feature map with 3×3 kernels, reaches the Neural Engine.
+   Batch 1 spatial is still CPU; batch 8 spatial is not.
+3. **Operations and precision.** Convolutions, ReLU, pooling and elementwise ops are supported; a single
+   unsupported op, dynamic shape or fp32 layer splits the graph or moves it. Static float16 `mlprogram`
+   models are the shape the engine is built for.
+
+The consequence for this player is architectural: a one-position-at-a-time flat policy will stay on the
+CPU. To use the Neural Engine it has to either **batch the positions it evaluates** — the search already
+proposes many candidates per decision — or use a **spatial table encoder** with a real trunk.
