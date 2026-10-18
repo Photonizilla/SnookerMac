@@ -338,12 +338,18 @@ public final class ComputerPlayer {
                 // The action is the network's; when it is a stroke, the candidate-conditioned network can
                 // supply that stroke, so the administrative heads and the shot can come from separate
                 // models while neither of them is the search.
-                if case .shoot = action, let shotPolicy, driver.canStrike {
-                    let candidates = policyCandidates(for: driver)
-                    if !candidates.isEmpty,
-                       let shot = shotPolicy(policySituation(for: driver), candidates) {
-                        action = .shoot(theShotAsItWillBePlayed(ComputerPlayer.legalShot(shot)))
+                if case .shoot(let shot) = action {
+                    var played = shot
+                    if let shotPolicy, driver.canStrike {
+                        let candidates = policyCandidates(for: driver)
+                        if !candidates.isEmpty,
+                           let chosen = shotPolicy(policySituation(for: driver), candidates) {
+                            played = chosen
+                        }
                     }
+                    // The cue action's own error is the player's, not the network's: it is added here, to
+                    // the angle, exactly as it is for a searched shot.
+                    action = .shoot(theShotAsItWillBePlayed(ComputerPlayer.legalShot(played)))
                 }
                 return action
             }

@@ -620,6 +620,25 @@ final class ComputerPlayerTests: XCTestCase {
         XCTAssertEqual(computer.lastIntent, .neural)
     }
 
+    /// The network's shot gets the **cue action's** error, not the network's: one normal draw added to the
+    /// angle, with the difficulty's σ, exactly as a searched shot does.
+    func testTheNetworksShotGetsTheCueActionsNormalError() {
+        let driver = straightRedSetup()
+        let computer = ComputerPlayer(playerIndex: 0, difficulty: .hard)
+        computer.aimError = 1 * .pi / 180
+        // Two uniforms chosen so that the Box–Muller draw is exactly −3.03485: the first sets the radius
+        // (√(−2·ln 0.01)) and the second the direction (cos π = −1).
+        var draws = [0.01, 0.5]
+        computer.aimErrorSource = { draws.removeFirst() }
+        computer.decideEverything = { _ in .shoot(Shot(angle: 0.3, power: 0.5)) }
+        guard case .shoot(let played) = computer.nextAction(for: driver) else {
+            return XCTFail("the network's shot was not taken")
+        }
+        XCTAssertEqual(played.angle - 0.3, -3.03485 * (1 * .pi / 180), accuracy: 1e-6,
+                       "one N(0, σ) draw on the aim, and nothing else changed")
+        XCTAssertEqual(played.power, 0.5, accuracy: 1e-12)
+    }
+
     func testTheSamplerDrawsFromANormalDistribution() {
         var generator = SeededRandom(seed: 99)
         let draws = (0..<20_000).map { _ in
