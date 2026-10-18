@@ -256,7 +256,10 @@ enum LearnedPolicy {
                     let score = choice[0].doubleValue
                     if score > bestScore {
                         bestScore = score
-                        bestShot = Shot(angle: atan2(choice[1].doubleValue, choice[2].doubleValue),
+                        // The aim head is the **turn from the candidate's own line**, so a swerve can be
+                        // aimed any number of degrees off the proposal.
+                        let turn = atan2(choice[1].doubleValue, choice[2].doubleValue)
+                        bestShot = Shot(angle: candidate.shot.angle + turn,
                                         power: choice[3].doubleValue,
                                         side: choice[4].doubleValue,
                                         vertical: choice[5].doubleValue,

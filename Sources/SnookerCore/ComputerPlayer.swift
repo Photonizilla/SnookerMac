@@ -235,6 +235,10 @@ public final class ComputerPlayer {
     /// kept as a switch, and the default is the one-shot value, which is what the measurements found gave
     /// the better play; `--line-tuning` turns it on.
     public var tuneAgainstTheLine: Bool = false
+    /// Aim offsets, in radians, that the tuning tries on a shot: the search's own way of finding how far a
+    /// swerve has to be aimed off the straight line. Empty by default — the shot is aimed where the
+    /// geometry put it — and set when a teacher is being used to generate swerve labels.
+    public var aimAdjustments: [Double] = []
     /// A learned policy, when one is loaded: the position's features in, the **whole stroke** out — the
     /// angle, the power, both spins and the lift. When it is set the search is not asked to choose a shot:
     /// what the network says is played, with the cue action's own error applied as it is for any stroke.
@@ -690,6 +694,7 @@ public final class ComputerPlayer {
             ("side", sideSpins),
             ("elevation", elevations),
             ("power", powerRefinements),
+            ("aim", aimAdjustments),
         ]
         for ladder in ladders {
             var variants: [Shot] = []
@@ -699,6 +704,9 @@ public final class ComputerPlayer {
                 case "power":
                     guard value != 1 else { continue }
                     shot.power = min(1, max(0.03, best.choice.shot.power * value))
+                case "aim":
+                    guard value != 0 else { continue }
+                    shot.angle += value
                 case "vertical":
                     guard value != 0 else { continue }
                     shot.vertical = value

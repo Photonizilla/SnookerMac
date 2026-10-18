@@ -68,6 +68,18 @@ def main():
     torch.manual_seed(arguments.seed)
 
     features, label, shot = read_dataset(arguments.dataset)
+    # The aim head is a **residual**: the turn from the candidate's own line. That is what lets the network
+    # move a shot ten degrees for a swerve, and what the loss then actually measures. The candidate's aim
+    # is the first pair after the position features.
+    candidate_angle = np.arctan2(features[:, 152], features[:, 153])
+    target_angle = np.arctan2(shot[:, 0], shot[:, 1])
+    offset = (target_angle - candidate_angle + np.pi) % (2 * np.pi) - np.pi
+    shot = shot.copy()
+    shot[:, 0] = np.sin(offset)
+    shot[:, 1] = np.cos(offset)
+    print(f"aim offsets: median {np.degrees(np.median(np.abs(offset))):.2f}°, "
+          f"95th {np.degrees(np.percentile(np.abs(offset), 95)):.2f}°, "
+          f"max {np.degrees(np.abs(offset).max()):.2f}°")
     print(f"{len(features)} candidate rows, {features.shape[1]} inputs, "
           f"{label.mean() * 100:.0f}% chosen")
     order = np.random.default_rng(arguments.seed).permutation(len(features))

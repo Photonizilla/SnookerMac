@@ -264,6 +264,7 @@ enum ComputerOpponent {
             for teacher in teachers {
                 teacher.aimError = 0
                 teacher.decideTheDraw = { frame % 2 }
+                if options.aimSweep { teacher.aimAdjustments = [-15, -7, -3, 3, 7, 15].map { degrees in degrees * Double.pi / 180 } }
             }
             var frameSamples: [(index: Int, who: Int)] = []
             var strokes = 0
@@ -392,6 +393,7 @@ enum ComputerOpponent {
             for teacher in teachers {
                 teacher.aimError = 0
                 teacher.decideTheDraw = { frame % 2 }
+                if options.aimSweep { teacher.aimAdjustments = [-15, -7, -3, 3, 7, 15].map { degrees in degrees * Double.pi / 180 } }
             }
             var decisions = 0
             while !driver.game.state.frameOver, decisions < 500 {
@@ -513,6 +515,7 @@ enum ComputerOpponent {
             for teacher in teachers {
                 teacher.aimError = 0
                 teacher.decideTheDraw = { frame % 2 }
+                if options.aimSweep { teacher.aimAdjustments = [-15, -7, -3, 3, 7, 15].map { degrees in degrees * Double.pi / 180 } }
             }
             var frameSamples: [(index: Int, who: Int)] = []
             var decisions = 0
@@ -580,6 +583,7 @@ enum ComputerOpponent {
             for teacher in teachers {
                 teacher.aimError = 0
                 teacher.decideTheDraw = { frame % 2 }
+                if options.aimSweep { teacher.aimAdjustments = [-15, -7, -3, 3, 7, 15].map { degrees in degrees * Double.pi / 180 } }
             }
             var frameSamples: [(index: Int, who: Int)] = []
             var decisions = 0
@@ -693,6 +697,9 @@ enum ComputerOpponent {
         /// A learned policy **over the proposed shots**: `--candidate-policy <model>`. The geometry supplies
         /// the candidates; the network ranks them and gives the stroke.
         var candidatePolicyPath: String?
+        /// Whether the teacher's tuning also tries aim offsets, so that swerve shots are labelled with the
+        /// line they actually have to be aimed along: `--aim-sweep`.
+        var aimSweep = false
         /// How many frames `--ai-export-policy` and `--ai-selfplay` should play.
         var frames = 10
         /// How far off the line the computer's cue goes, in degrees. Nothing means **the difficulty's
@@ -742,6 +749,7 @@ enum ComputerOpponent {
             policyPath = ComputerOpponent.argument("--policy", in: arguments)
             deciderPath = ComputerOpponent.argument("--decider", in: arguments)
             candidatePolicyPath = ComputerOpponent.argument("--candidate-policy", in: arguments)
+            aimSweep = arguments.contains("--aim-sweep")
             if let value = ComputerOpponent.argument("--frames", in: arguments), let n = Int(value) {
                 frames = max(1, n)
             }
@@ -770,6 +778,9 @@ enum ComputerOpponent {
     static func dress(_ player: ComputerPlayer, with options: Options, random: @escaping () -> Double) {
         player.aimError = options.cueAction
         player.aimErrorSource = random
+        if options.aimSweep {
+            player.aimAdjustments = [-15, -7, -3, 3, 7, 15].map { $0 * Double.pi / 180 }
+        }
         if let lineTuning = options.lineTuning { player.tuneAgainstTheLine = lineTuning }
         if let depth = options.depth { player.depth = depth }
     }

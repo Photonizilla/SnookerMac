@@ -137,16 +137,30 @@ intent, cut, pocket and ball. The model answers with a **score** and six stroke 
 candidate is scored, the highest wins, and its stroke is what is played.
 
 ```sh
-Snooker --ai-export-candidates AI/Models/candidates.bin --frames 10 --hard
+Snooker --ai-export-candidates AI/Models/candidates.bin --frames 10 --hard --aim-sweep
 python3 AI/train_candidate_net.py AI/Models/candidates.bin AI/Models/Candidate1.mlpackage
 xcrun coremlcompiler compile AI/Models/Candidate1.mlpackage AI/Models/
 Snooker --ai-play 1 --hard --candidate-policy AI/Models/Candidate1.mlmodelc
 ```
 
-On 2,059 candidate rows from 240 Hard positions, the model ranks the teacher's candidate above the others
-**80%** of the time and its chosen-shot aim error is **5.44°**, against **24.7°** for the absolute policy on
-the same teacher data — a 4.5× improvement from the representation alone. In play it still fouls (5.4° is
-enough to miss), and the tally records **0 shots played out**: the geometry proposed, the network decided.
+The aim head is a **residual**: the network gives the turn from the candidate's own line, not an absolute
+angle, so it can move a shot any number of degrees — which is what a swerve needs. The teacher also gets an
+**aim sweep** (`--aim-sweep`: ±3°, ±7°, ±15°) when the data is generated, so the labels contain the lines
+swerve shots actually have to be aimed along. In the resulting dataset **8% of chosen shots turn more than
+3°**, 8% more than 5° and 3.5% more than 10°; among shots with lift, the mean turn is **5.44°** and 18%
+exceed 5°. The teacher's *search* found those lines; the network is what learns them.
+
+On 5,347 candidate rows from 596 Hard positions:
+
+| | absolute policy | candidate-conditioned |
+|---|---|---|
+| chosen-shot aim | 24.7° | **0.62°** |
+| ranking the teacher's candidate | — | **97%** |
+
+The aim error fell by a further 8.8× once the turn was a residual and the labels contained swerves
+(5.44° → 0.62°). In play it still fouls — at 0.62° the aim is no longer the main culprit; the strength,
+spin and lift heads are — and the tally records **0 shots played out**: the geometry proposed, the network
+decided.
 
 The two models compose: `--decider` makes every administrative decision, and `--candidate-policy` supplies
 the stroke whenever that decision is "shoot". That is the pure player with the better shot representation,
