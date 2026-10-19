@@ -270,6 +270,31 @@ if let index = CommandLine.arguments.firstIndex(of: "--ai-selfplay-all") {
                                              options: ComputerOpponent.Options(CommandLine.arguments)))
 }
 
+// The network playing itself, with no teacher: its own decisions, and the frame's winner as the label.
+if let index = CommandLine.arguments.firstIndex(of: "--ai-selfplay-wins") {
+    guard CommandLine.arguments.count > index + 1,
+          !CommandLine.arguments[index + 1].hasPrefix("--") else {
+        print("--ai-selfplay-wins needs a path to write to")
+        exit(2)
+    }
+    exit(ComputerOpponent.selfPlayWins(path: CommandLine.arguments[index + 1],
+                                       options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
+// Two decision models against each other. What is reported is frames won, which is the only acceptance a
+// self-play round gets.
+if let index = CommandLine.arguments.firstIndex(of: "--ai-match") {
+    guard CommandLine.arguments.count > index + 2,
+          !CommandLine.arguments[index + 1].hasPrefix("--"),
+          !CommandLine.arguments[index + 2].hasPrefix("--") else {
+        print("--ai-match needs two decision models")
+        exit(2)
+    }
+    exit(ComputerOpponent.playMatch(first: CommandLine.arguments[index + 1],
+                                    second: CommandLine.arguments[index + 2],
+                                    options: ComputerOpponent.Options(CommandLine.arguments)))
+}
+
 if let index = CommandLine.arguments.firstIndex(of: "--ai-export") {
     guard CommandLine.arguments.count > index + 1,
           !CommandLine.arguments[index + 1].hasPrefix("--") else {

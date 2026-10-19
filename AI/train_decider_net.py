@@ -84,6 +84,9 @@ def main():
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--init")
     parser.add_argument("--no-coreml", action="store_true")
+    parser.add_argument("--win-weighted", action="store_true",
+                        help="weight every decision by whether its player won the frame: the only label a "
+                             "self-play round is allowed to learn from")
     arguments = parser.parse_args()
     torch.manual_seed(arguments.seed)
 
@@ -116,6 +119,11 @@ def main():
 
     x_train, a_train, s_train, p_train, c_train = tensors(train)
     x_val, a_val, s_val, p_val, c_val = tensors(val)
+    won = outcomes[:, 3] if outcomes.ndim > 1 and outcomes.shape[1] >= 4 else np.zeros(len(inputs))
+    sample_weight = 0.15 + 0.85 * won if arguments.win_weighted else np.ones(len(inputs))
+    if arguments.win_weighted:
+        print(f"win-weighted: {100 * float(won.mean()):.0f}% of decisions come from frames that were won")
+    w_train = torch.tensor(sample_weight[train], dtype=torch.float32)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"training on {device}")
     model = DeciderNet(inputs.shape[1], arguments.hidden).to(device)
@@ -129,18 +137,24 @@ def main():
     shot_weights = torch.tensor([4.0, 4.0, 2.0, 1.5, 1.5, 1.0], device=device)
     cross = nn.CrossEntropyLoss()
 
-    def loss_of(out, a, s, p, c):
-        loss = cross(out[:, :ACTIONS], a)
+    def loss_of(out, a, s, p, c, w):
+        ce = nn.functional.cross_entropy(out[:, :ACTIONS], a, reduction="none")
+        loss = (ce * w).mean()
         is_shot = a == 0
         if is_shot.any():
-            loss = loss + (((out[is_shot, ACTIONS:ACTIONS + SHOT] - s[is_shot]) ** 2)
-                           * shot_weights).mean()
+            mse = (((out[is_shot, ACTIONS:ACTIONS + SHOT] - s[is_shot]) ** 2)
+                   * shot_weights).mean(dim=1)
+            loss = loss + (mse * w[is_shot]).mean()
         is_place = a == 1
         if is_place.any():
-            loss = loss + cross(out[is_place, ACTIONS + SHOT:ACTIONS + SHOT + PLACEMENTS], p[is_place])
+            place = nn.functional.cross_entropy(
+                out[is_place, ACTIONS + SHOT:ACTIONS + SHOT + PLACEMENTS], p[is_place], reduction="none")
+            loss = loss + (place * w[is_place]).mean()
         is_colour = (a == 2) | (a == 3)
         if is_colour.any():
-            loss = loss + cross(out[is_colour, ACTIONS + SHOT + PLACEMENTS:], c[is_colour])
+            colour = nn.functional.cross_entropy(
+                out[is_colour, ACTIONS + SHOT + PLACEMENTS:], c[is_colour], reduction="none")
+            loss = loss + (colour * w[is_colour]).mean()
         return loss
 
     def aim_error(out, a, s):
@@ -164,7 +178,7 @@ def main():
             batch = (x_train[index].to(device), a_train[index].to(device), s_train[index].to(device),
                      p_train[index].to(device), c_train[index].to(device))
             optimiser.zero_grad()
-            loss = loss_of(model(batch[0]), *batch[1:])
+            loss = loss_of(model(batch[0]), *batch[1:], w_train[index].to(device))
             loss.backward()
             optimiser.step()
             total += float(loss.detach()) * len(index)

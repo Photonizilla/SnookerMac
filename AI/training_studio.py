@@ -275,6 +275,34 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                                                   str(ROOT / "AI" / "train_candidate_net.py"),
                                                   str(dataset), str(model), "--convert-only"]),
                 ("Compiling the model", compile_model)]
+    if task == "selfplay_wins":
+        # The network plays itself with the models already in this session; its own decisions are the
+        # samples and **who won the frame** is the only weight. Then old and new play each other: a round
+        # counts as an improvement only if the new model wins the match.
+        decider = folder / "Decider.mlmodelc"
+        candidate = folder / "Model.mlmodelc"
+        play_self = [engine, "--ai-selfplay-wins", str(folder / "selfplay.bin"),
+                     "--decider", str(decider),
+                     "--frames", str(int(config.get("frames", 8))),
+                     "--reds", str(int(config.get("reds", 10))),
+                     "--seed", str(int(config.get("seed", 1)))]
+        if candidate.exists():
+            play_self += ["--candidate-policy", str(candidate)]
+        keep_old = ["cp", "-R", str(decider), str(folder / "Decider-old.mlmodelc")]
+        fine_tune = [python, str(ROOT / "AI" / "train_decider_net.py"),
+                     str(folder / "selfplay.bin"), str(folder / "Decider.mlpackage"),
+                     "--win-weighted", "--init", str(folder / "Decider.mlpackage.pt")] + training
+        compile_decider = ["xcrun", "coremlcompiler", "compile",
+                           str(folder / "Decider.mlpackage"), str(folder)]
+        match = [engine, "--ai-match", str(folder / "Decider-old.mlmodelc"), str(decider),
+                 "--frames", str(max(2, int(config.get("frames", 8)) // 2))]
+        if candidate.exists():
+            match += ["--candidate-policy", str(candidate)]
+        return [("The network plays itself", play_self),
+                ("Keeping the old model", keep_old),
+                ("Training on the frames it won", fine_tune),
+                ("Compiling the new model", compile_decider),
+                ("A match: old against new", match)]
     raise SystemExit(f"unknown task {task}")
 
 
@@ -528,6 +556,7 @@ PAGE = r"""<!doctype html>
       <option value="train_decider">Train all-decisions model</option>
       <option value="play_candidate">Test frame with the candidate model</option>
       <option value="convert_candidate">Convert the saved weights (no training)</option>
+      <option value="selfplay_wins">Self-play: network vs itself, win-weighted (continue this session)</option>
       <option value="setup_python">Set up the training Python (venv + install)</option>
     </select>
     <label for="session">Session name</label>

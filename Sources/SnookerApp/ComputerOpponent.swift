@@ -625,6 +625,118 @@ enum ComputerOpponent {
         return 0
     }
 
+    /// The **network playing itself**, with no teacher, recording its own decisions and — the only label a
+    /// self-play round is allowed to learn from — **which side won the frame**. The losers' decisions stay
+    /// in the file so the training can weigh them down; nothing here is scored by a pot.
+    static func selfPlayWins(path: String, options: Options) -> Int32 {
+        guard let deciderPath = options.deciderPath,
+              let decision = LearnedPolicy.loadEverything(path: deciderPath, describe: false) else {
+            print("--ai-selfplay-wins needs --decider <a decision model that loads>")
+            return 2
+        }
+        let shotPolicy = options.candidatePolicyPath.flatMap {
+            LearnedPolicy.loadCandidate(path: $0, describe: false)
+        }
+        let start = Date()
+        var samples: [AllPolicySample] = []
+        var wins = [0, 0]
+        for frame in 0..<options.frames {
+            let driver = FrameDriver(playerNames: ["A", "B"])
+            driver.game.decideTheDraw = { frame % 2 }
+            loadTheStart(of: frame, into: driver, options: options)
+            let players = (0...1).map { seat -> ComputerPlayer in
+                let player = ComputerPlayer(playerIndex: seat, difficulty: options.difficulty)
+                player.decideEverything = decision
+                player.shotPolicy = shotPolicy
+                player.aimError = options.cueAction
+                player.decideTheDraw = { frame % 2 }
+                return player
+            }
+            var frameSamples: [(index: Int, who: Int)] = []
+            var decisions = 0
+            while !driver.game.state.frameOver, decisions < 900 {
+                let who = driver.game.state.currentPlayer
+                let situation = players[who].policySituation(for: driver)
+                let action = players[who].nextAction(for: driver)
+                if let label = policyAction(action) {
+                    samples.append(AllPolicySample(inputs: situation.values,
+                                                   action: Float(label.kind), shot: label.shot,
+                                                   placement: Float(label.placement),
+                                                   colour: Float(label.colour)))
+                    frameSamples.append((samples.count - 1, who))
+                }
+                decisions += 1
+                guard ComputerMatch.apply(action, to: driver) else { break }
+                if case .shoot = action, let index = frameSamples.last?.index {
+                    samples[index].points = Float(driver.lastResult?.pointsScored ?? 0)
+                    samples[index].foul = driver.lastResult?.foul != nil ? 1 : 0
+                    samples[index].kept = driver.game.state.currentPlayer == who ? 1 : 0
+                }
+            }
+            if let winner = driver.game.state.winner {
+                wins[winner] += 1
+                for sample in frameSamples where sample.who == winner { samples[sample.index].won = 1 }
+            }
+            print("  frame \(frame + 1) of \(options.frames): \(decisions) decisions,"
+                    + " \(driver.game.state.scores[0])–\(driver.game.state.scores[1])"
+                    + " \(driver.game.state.winner.map { $0 == 0 ? "A" : "B" } ?? "unfinished"),"
+                    + " \(samples.count) samples, \(String(format: "%.0f", Date().timeIntervalSince(start))) s")
+        }
+        guard writeAllPolicySamples(samples, to: path) else { return 1 }
+        let wonSamples = samples.filter { $0.won > 0 }.count
+        print("wrote \(samples.count) self-play samples (\(wonSamples) from the frames that were won)"
+                + " to \(path); the frames were \(wins[0])–\(wins[1])")
+        return 0
+    }
+
+    /// Two decision models against each other, one on each seat, the seats alternating between frames. What
+    /// is reported is **frames won**: the acceptance test for a self-play round.
+    static func playMatch(first: String, second: String, options: Options) -> Int32 {
+        guard let a = LearnedPolicy.loadEverything(path: first, describe: false),
+              let b = LearnedPolicy.loadEverything(path: second, describe: false) else {
+            print("--ai-match needs two decision models that load")
+            return 2
+        }
+        let shotPolicy = options.candidatePolicyPath.flatMap {
+            LearnedPolicy.loadCandidate(path: $0, describe: false)
+        }
+        var wins = [0, 0]
+        var points = [0, 0]
+        for frame in 0..<options.frames {
+            let driver = FrameDriver(playerNames: ["A", "B"])
+            driver.game.decideTheDraw = { frame % 2 }
+            loadTheStart(of: frame, into: driver, options: options)
+            // Alternate who breaks, so neither model gets the opening every frame.
+            let aSeat = frame % 2
+            let models = aSeat == 0 ? [a, b] : [b, a]
+            let players = (0...1).map { seat -> ComputerPlayer in
+                let player = ComputerPlayer(playerIndex: seat, difficulty: options.difficulty)
+                player.aimError = options.cueAction
+                player.decideEverything = models[seat]
+                player.shotPolicy = shotPolicy
+                player.decideTheDraw = { frame % 2 }
+                return player
+            }
+            var decisions = 0
+            while !driver.game.state.frameOver, decisions < 900 {
+                let who = driver.game.state.currentPlayer
+                let action = players[who].nextAction(for: driver)
+                decisions += 1
+                guard ComputerMatch.apply(action, to: driver) else { break }
+            }
+            let scores = driver.game.state.scores
+            points[0] += aSeat == 0 ? scores[0] : scores[1]
+            points[1] += aSeat == 0 ? scores[1] : scores[0]
+            if let winner = driver.game.state.winner {
+                wins[winner == aSeat ? 0 : 1] += 1
+            }
+            print("  frame \(frame + 1): \(scores[0])–\(scores[1]),"
+                    + " \(driver.game.state.winner.map { $0 == aSeat ? "A" : "B" } ?? "unfinished")")
+        }
+        print("frames won  A \(wins[0]) – \(wins[1]) B   (points \(points[0])–\(points[1]))")
+        return wins[1] > wins[0] ? 1 : 0
+    }
+
     // MARK: - What thinking costs
 
     /// A position as it is written down: what it looks like, what the player's own arithmetic made of it,
