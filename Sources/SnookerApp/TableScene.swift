@@ -56,9 +56,6 @@ final class TableScene: SKScene {
     /// Deciding means playing shots out — tens of them, on copies of the frame — so it is done off the
     /// main thread and the picture keeps being drawn while the computer thinks.
     private static let thinking = DispatchQueue(label: "snooker.the.computer", qos: .userInitiated)
-    /// How long the cue stands on the ball before the stroke is played.
-    private static let theTurnOfTheCue: TimeInterval = 0.55
-
     /// Whether the computer is the one to play now.
     var theComputerIsAtTheTable: Bool {
         computerAtTheTable != nil
@@ -83,6 +80,17 @@ final class TableScene: SKScene {
         }
         return computers.values.map(\.lastPlan).first(where: { !$0.isEmpty }) ?? "-"
     }
+    /// The game mode in a few words, as the corner of the screen shows it: who plays, at what strength, and
+    /// whether the computer is on a network.
+    var theGameModeDescription: String {
+        guard !computers.isEmpty else { return "Human vs Human" }
+        var parts = [computers.count == 2 ? "Computer vs Computer" : "Human vs Computer",
+                     computerDifficulty.rawValue.capitalized]
+        if computerIsDeepLearned { parts.append("Deep Learned") }
+        return parts.joined(separator: " · ")
+    }
+    /// What the small mode line says, for the harness.
+    var theGameModeOnScreen: String { modeLabel.text ?? "" }
     /// Whether the computer is playing that seat.
     func isPlayingTheComputer(_ seat: Int) -> Bool { computers[seat] != nil }
     var computerDifficulty: ComputerPlayer.Difficulty {
@@ -397,6 +405,8 @@ final class TableScene: SKScene {
     private var statusLabel = SKLabelNode()
     private var viewLabel = SKLabelNode()
     private var hintLabel = SKLabelNode()
+    /// The game mode, small, under the hint: who plays, how strong, and whether the computer is a network.
+    private var modeLabel = SKLabelNode()
     private var commentaryLabels: [SKLabelNode] = []
     /// What the referee has just called: the touching ball, when there is one (Rule 8(a)).
     private var callLabel = SKLabelNode()
@@ -750,6 +760,13 @@ final class TableScene: SKScene {
         hintLabel.verticalAlignmentMode = .center
         hintLabel.fontColor = SKColor(white: 0.62, alpha: 1)
         hudLayer.addChild(hintLabel)
+
+        modeLabel.fontSize = 11
+        modeLabel.fontName = "Helvetica Neue Medium"
+        modeLabel.horizontalAlignmentMode = .left
+        modeLabel.verticalAlignmentMode = .center
+        modeLabel.fontColor = SKColor(white: 0.55, alpha: 1)
+        hudLayer.addChild(modeLabel)
 
         // The referee's call, where a player will see it: above the status line, in its own colour,
         // rather than buried in the log with everything else.
@@ -1192,6 +1209,7 @@ final class TableScene: SKScene {
         // The top line of the screen, clear of the score board's own ends: the help hint at the left of
         // it and the view the player is looking through at the right.
         hintLabel.position = CGPoint(x: margin, y: top)
+        modeLabel.position = CGPoint(x: margin, y: top - 18)
         viewLabel.position = CGPoint(x: size.width - margin, y: top)
         helpLayer.position = CGPoint(x: size.width / 2, y: size.height / 2)
         for (index, label) in commentaryLabels.enumerated() {
@@ -1337,7 +1355,9 @@ final class TableScene: SKScene {
             controller.aimAngle = shot.angle
             controller.setSpin(side: shot.side, vertical: shot.vertical)
             shotOwed = shot
-            shotOwedAt = CACurrentMediaTime() + TableScene.theTurnOfTheCue
+            // The stroke is played as soon as the computer has answered: the time between shots is the
+            // time it takes to think, and the cue action itself. No pose on the ball first.
+            shotOwedAt = CACurrentMediaTime()
         case .wait:
             break
         case .reRack:
@@ -1420,6 +1440,7 @@ final class TableScene: SKScene {
 
     private func updateHUDText() {
         layoutScoreBoard()
+        modeLabel.text = theGameModeDescription
         breakLabel.text = "Break: \(controller.breakScore)"
         ballOnLabel.text = "Ball on: \(controller.ballOnDescription)"
         remainingLabel.text = "Points remaining: \(controller.remainingPoints)"
