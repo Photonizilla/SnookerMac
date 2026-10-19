@@ -48,7 +48,7 @@ program(1.0)
             tensor<int32, [1]> var_59_dilations_0 = const()[name = tensor<string, []>("op_59_dilations_0"), val = tensor<int32, [1]>([1])];
             tensor<int32, []> var_59_groups_0 = const()[name = tensor<string, []>("op_59_groups_0"), val = tensor<int32, []>(1)];
             tensor<fp16, [6, 128, 1]> shot_weight_to_fp16 = const()[name = tensor<string, []>("shot_weight_to_fp16"), val = tensor<fp16, [6, 128, 1]>(BLOBFILE(path = tensor<string, []>("@model_path/weights/weight.bin"), offset = tensor<uint64, []>(452928)))];
-            tensor<fp16, [6]> shot_bias_to_fp16 = const()[name = tensor<string, []>("shot_bias_to_fp16"), val = tensor<fp16, [6]>([-0x1.228p-6, 0x1.d2cp-5, 0x1.858p-5, -0x1.da8p-6, 0x1.19p-4, -0x1.a2cp-3])];
+            tensor<fp16, [6]> shot_bias_to_fp16 = const()[name = tensor<string, []>("shot_bias_to_fp16"), val = tensor<fp16, [6]>([-0x1.eap-6, 0x1.5a4p-4, -0x1.2d4p-2, 0x1.a7cp-6, -0x1.afp-5, -0x1.444p-1])];
             tensor<fp16, [1, 6, 1]> var_59_cast_fp16 = conv(bias = shot_bias_to_fp16, dilations = var_59_dilations_0, groups = var_59_groups_0, pad = var_59_pad_0, pad_type = var_59_pad_type_0, strides = var_59_strides_0, weight = shot_weight_to_fp16, x = input_17_cast_fp16)[name = tensor<string, []>("op_59_cast_fp16")];
             tensor<int32, [1]> shot_1_axes_0 = const()[name = tensor<string, []>("shot_1_axes_0"), val = tensor<int32, [1]>([-1])];
             tensor<fp16, [1, 6]> shot_1_cast_fp16 = squeeze(axes = shot_1_axes_0, x = var_59_cast_fp16)[name = tensor<string, []>("shot_1_cast_fp16")];
@@ -106,7 +106,7 @@ program(1.0)
             tensor<int32, [1]> var_154_dilations_0 = const()[name = tensor<string, []>("op_154_dilations_0"), val = tensor<int32, [1]>([1])];
             tensor<int32, []> var_154_groups_0 = const()[name = tensor<string, []>("op_154_groups_0"), val = tensor<int32, []>(1)];
             tensor<fp16, [6, 128, 1]> colours_weight_to_fp16 = const()[name = tensor<string, []>("colours_weight_to_fp16"), val = tensor<fp16, [6, 128, 1]>(BLOBFILE(path = tensor<string, []>("@model_path/weights/weight.bin"), offset = tensor<uint64, []>(474432)))];
-            tensor<fp16, [6]> colours_bias_to_fp16 = const()[name = tensor<string, []>("colours_bias_to_fp16"), val = tensor<fp16, [6]>([0x1.a14p-6, -0x1.d5cp-6, -0x1.114p-5, 0x1.33p-4, -0x1.734p-7, -0x1.ef4p-5])];
+            tensor<fp16, [6]> colours_bias_to_fp16 = const()[name = tensor<string, []>("colours_bias_to_fp16"), val = tensor<fp16, [6]>([-0x1.a24p-6, -0x1.a24p-6, -0x1.31p-5, 0x1.f8p-5, 0x1.e0cp-8, -0x1.2dcp-4])];
             tensor<fp16, [1, 6, 1]> var_154_cast_fp16 = conv(bias = colours_bias_to_fp16, dilations = var_154_dilations_0, groups = var_154_groups_0, pad = var_154_pad_0, pad_type = var_154_pad_type_0, strides = var_154_strides_0, weight = colours_weight_to_fp16, x = input_17_cast_fp16)[name = tensor<string, []>("op_154_cast_fp16")];
             tensor<int32, [1]> var_156_axes_0 = const()[name = tensor<string, []>("op_156_axes_0"), val = tensor<int32, [1]>([-1])];
             tensor<fp16, [1, 6]> var_156_cast_fp16 = squeeze(axes = var_156_axes_0, x = var_154_cast_fp16)[name = tensor<string, []>("op_156_cast_fp16")];

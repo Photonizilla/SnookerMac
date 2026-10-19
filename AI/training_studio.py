@@ -316,6 +316,33 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                 ("Training on the frames it won", fine_tune),
                 ("Compiling the new model", compile_decider),
                 ("A match: old against new", match)]
+    if task == "selfplay_breaks":
+        # The same round, weighted by the **highest break** each side made rather than by who won: an
+        # 80 break in a lost frame still teaches the decisions that built it.
+        decider = folder / "Decider.mlmodelc"
+        candidate = folder / "Model.mlmodelc"
+        play_self = [engine, "--ai-selfplay-wins", str(folder / "breaks.bin"),
+                     "--decider", str(decider),
+                     "--frames", str(int(config.get("frames", 8))),
+                     "--reds", str(int(config.get("reds", 10))),
+                     "--seed", str(int(config.get("seed", 1)))]
+        if candidate.exists():
+            play_self += ["--candidate-policy", str(candidate)]
+        keep_old = ["cp", "-R", str(decider), str(folder / "Decider-old.mlmodelc")]
+        fine_tune = [python, str(ROOT / "AI" / "train_decider_net.py"),
+                     str(folder / "breaks.bin"), str(folder / "Decider.mlpackage"),
+                     "--break-weighted", "--init", str(folder / "Decider.mlpackage.pt")] + training
+        compile_decider = ["xcrun", "coremlcompiler", "compile",
+                           str(folder / "Decider.mlpackage"), str(folder)]
+        match = [engine, "--ai-match", str(folder / "Decider-old.mlmodelc"), str(decider),
+                 "--frames", str(max(2, int(config.get("frames", 8)) // 2))]
+        if candidate.exists():
+            match += ["--candidate-policy", str(candidate)]
+        return [("The network plays itself", play_self),
+                ("Keeping the old model", keep_old),
+                ("Training on the frames with the highest breaks", fine_tune),
+                ("Compiling the new model", compile_decider),
+                ("A match: old against new", match)]
     if task == "save_version":
         return []
     raise SystemExit(f"unknown task {task}")
@@ -589,6 +616,20 @@ class Handler(BaseHTTPRequestHandler):
             ok = deploy_version(str(payload.get("id", "")))
             self.reply(200, json.dumps({"ok": ok, "deployed": read_deployed()}).encode())
             return
+        if parsed.path == "/api/delete_version":
+            version_id = str(payload.get("id", ""))
+            folder = VERSIONS / version_id
+            deployed = read_deployed()
+            if version_id and version_id in (deployed.get("candidate"), deployed.get("decider")):
+                self.reply(200, json.dumps({
+                    "ok": False, "error": "that version is deployed — deploy another one first"}).encode())
+                return
+            if folder.is_dir() and folder.parent == VERSIONS:
+                shutil.rmtree(folder)
+                self.reply(200, json.dumps({"ok": True}).encode())
+            else:
+                self.reply(200, json.dumps({"ok": False, "error": "no such version"}).encode())
+            return
         if parsed.path == "/api/run":
             task = payload.get("task", "full_candidate")
             if task in TRAINING_TASKS and not has_training_packages(python_path(payload)):
@@ -713,6 +754,7 @@ PAGE = r"""<!doctype html>
       <option value="play_candidate">Test frame with the candidate model</option>
       <option value="convert_candidate">Convert the saved weights (no training)</option>
       <option value="selfplay_wins">Self-play: network vs itself, win-weighted (continue this session)</option>
+      <option value="selfplay_breaks">Self-play: network vs itself, break-weighted (continue this session)</option>
       <option value="deploy">Deploy the session's models to the game</option>
       <option value="save_version">Save this session as a version</option>
       <option value="setup_python">Set up the training Python (venv + install)</option>
@@ -767,6 +809,7 @@ PAGE = r"""<!doctype html>
       <div class="actions">
         <button class="small" id="saveVersion">Save this session as a version</button>
         <button class="small" id="deployVersion">Deploy the chosen version</button>
+        <button class="small" id="deleteVersion">Delete the chosen version</button>
       </div>
     </div>
     <div class="status">
@@ -878,6 +921,15 @@ $("deployVersion").onclick = async () => {
   $("log").textContent = r.ok
     ? `Deployed ${chosen.value}. Start a new Exact + Deep Learned game.`
     : "That version could not be deployed.";
+  refreshVersions();
+};
+$("deleteVersion").onclick = async () => {
+  const chosen = document.querySelector('input[name="version"]:checked');
+  if (!chosen) { $("log").textContent = "Choose a version in the list first."; return; }
+  if (!confirm(`Delete ${chosen.value}? The model files in that version are removed.`)) return;
+  const r = await (await fetch("/api/delete_version", { method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify({id: chosen.value}) })).json();
+  $("log").textContent = r.ok ? `Deleted ${chosen.value}.` : (r.error || "Could not delete it.");
   refreshVersions();
 };
 $("check").onclick = async () => {

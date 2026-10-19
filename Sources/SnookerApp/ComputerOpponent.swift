@@ -321,6 +321,10 @@ enum ComputerOpponent {
         var foul: Float = 0
         var kept: Float = 0
         var won: Float = 0
+        /// The highest break the sample's own player made in that frame: the weight a break-weighted
+        /// self-play round learns from — a decision that was part of a 40 break is worth more than one that
+        /// was part of a 4.
+        var highestBreak: Float = 0
     }
 
     /// The action classes, in the order `PolicySituation.actions` uses them.
@@ -493,14 +497,17 @@ enum ComputerOpponent {
             withUnsafeBytes(of: value.bitPattern.littleEndian) { data.append(contentsOf: $0) }
         }
         put(UInt32(samples.count))
-        put(UInt32(PolicySituation.count + 1 + 6 + 1 + 1 + 4))
+        put(UInt32(PolicySituation.count + 1 + 6 + 1 + 1 + 5))
         for sample in samples {
             for value in sample.inputs { put(value) }
             put(sample.action)
             for value in sample.shot { put(value) }
             put(sample.placement)
             put(sample.colour)
-            for value in [sample.points, sample.foul, sample.kept, sample.won] { put(value) }
+            for value in [sample.points, sample.foul, sample.kept, sample.won,
+                          sample.highestBreak] {
+                put(value)
+            }
         }
         do {
             try data.write(to: URL(fileURLWithPath: path))
@@ -528,6 +535,7 @@ enum ComputerOpponent {
                 if options.aimSweep { teacher.aimAdjustments = [-15, -7, -3, 3, 7, 15].map { degrees in degrees * Double.pi / 180 } }
             }
             var frameSamples: [(index: Int, who: Int)] = []
+            var highestBreak = [0, 0]
             var decisions = 0
             while !driver.game.state.frameOver, decisions < 800 {
                 let who = driver.game.state.currentPlayer
@@ -551,10 +559,14 @@ enum ComputerOpponent {
                     samples[index].points = Float(driver.lastResult?.pointsScored ?? 0)
                     samples[index].foul = driver.lastResult?.foul != nil ? 1 : 0
                     samples[index].kept = driver.game.state.currentPlayer == who ? 1 : 0
+                    highestBreak[who] = max(highestBreak[who], driver.game.state.breakScore)
                 }
             }
             if let winner = driver.game.state.winner {
                 for sample in frameSamples where sample.who == winner { samples[sample.index].won = 1 }
+            }
+            for sample in frameSamples {
+                samples[sample.index].highestBreak = Float(highestBreak[sample.who])
             }
             if options.verbose {
                 print("  frame \(frame + 1) of \(options.frames): \(decisions) decisions,"

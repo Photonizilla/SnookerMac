@@ -25,6 +25,9 @@ MAGIC = b"SNOOKERPA1"
 ACTIONS, SHOT, PLACEMENTS, COLOURS, OUTCOMES = 12, 6, 64, 6, 4
 LABELS = 1 + SHOT + 1 + 1
 OUTPUTS = ACTIONS + SHOT + PLACEMENTS + COLOURS
+# The format's input width (`PolicySituation.count`). The outcomes are whatever the stride leaves, so a
+# dataset from before the highest-break column still reads: four outcomes there, five after it.
+INPUTS = 240
 
 
 def read_dataset(path):
@@ -33,9 +36,8 @@ def read_dataset(path):
         raise SystemExit(f"{path} is not an all-decisions dataset (it starts with {blob[:10]!r})")
     count, stride = struct.unpack_from("<II", blob, 10)
     rows = np.frombuffer(blob, dtype="<f4", offset=18, count=count * stride).reshape(count, stride)
-    split = stride - LABELS - OUTCOMES
-    inputs = rows[:, :split].copy()
-    rest = rows[:, split:]
+    inputs = rows[:, :INPUTS].copy()
+    rest = rows[:, INPUTS:]
     action = rest[:, 0].astype(np.int64)
     shot = rest[:, 1:7].copy()
     placement = rest[:, 7].astype(np.int64)
@@ -87,6 +89,9 @@ def main():
     parser.add_argument("--win-weighted", action="store_true",
                         help="weight every decision by whether its player won the frame: the only label a "
                              "self-play round is allowed to learn from")
+    parser.add_argument("--break-weighted", action="store_true",
+                        help="weight every decision by the highest break its player made in the frame: a "
+                             "decision that was part of a 40 break counts more than one in a 4")
     arguments = parser.parse_args()
     torch.manual_seed(arguments.seed)
 
@@ -120,9 +125,20 @@ def main():
     x_train, a_train, s_train, p_train, c_train = tensors(train)
     x_val, a_val, s_val, p_val, c_val = tensors(val)
     won = outcomes[:, 3] if outcomes.ndim > 1 and outcomes.shape[1] >= 4 else np.zeros(len(inputs))
-    sample_weight = 0.15 + 0.85 * won if arguments.win_weighted else np.ones(len(inputs))
-    if arguments.win_weighted:
+    highest = outcomes[:, 4] if outcomes.ndim > 1 and outcomes.shape[1] >= 5 else np.zeros(len(inputs))
+    if arguments.break_weighted and not (outcomes.ndim > 1 and outcomes.shape[1] >= 5):
+        raise SystemExit("this dataset has no highest-break column: export it with --ai-selfplay-wins")
+    if arguments.break_weighted:
+        # Full weight at a 50 break; a frame that made nothing still contributes a little.
+        sample_weight = 0.15 + 0.85 * np.minimum(1.0, highest / 50.0)
+        print(f"break-weighted: highest breaks median {np.median(highest):.0f}, "
+              f"90th {np.percentile(highest, 90):.0f}, max {highest.max():.0f}; "
+              f"{100 * (highest >= 20).mean():.0f}% of decisions are from a 20+ break")
+    elif arguments.win_weighted:
+        sample_weight = 0.15 + 0.85 * won
         print(f"win-weighted: {100 * float(won.mean()):.0f}% of decisions come from frames that were won")
+    else:
+        sample_weight = np.ones(len(inputs))
     w_train = torch.tensor(sample_weight[train], dtype=torch.float32)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"training on {device}")

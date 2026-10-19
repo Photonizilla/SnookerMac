@@ -50,6 +50,24 @@ version with both models replaces both; one with only a candidate (or only decis
 part. Shot-policy versions are not deployable to the game: the Exact network needs the candidate-conditioned
 stroke and the all-decisions model.
 
+**Delete the chosen version** removes its folder. The version that is currently deployed is refused — deploy
+another one first — so the game can never be left pointing at a version that is gone.
+
+### Self-play rounds
+
+Two rounds train the all-decisions model on a network playing itself, with σ = 0.03° of aim error on every
+shot:
+
+- **win-weighted** — every decision is weighted by whether its player won the frame (1.0 for the winner's
+  side, 0.15 for the loser's);
+- **break-weighted** — every decision is weighted by the **highest break** its player made in that frame,
+  reaching full weight at 50 (so a decision that was part of a 40 break counts far more than one made in a
+  frame that never got going). The frame's winner is not consulted.
+
+Both write a self-play dataset, fine-tune the existing decision model from its weights, keep the old model
+aside, and finish with a match between old and new — frames won are the acceptance for the win-weighted
+round, and the break distribution is the thing to watch for the break-weighted one.
+
 The studio itself needs only the Python standard library; the training needs `torch` and `coremltools` in
 the interpreter you point it at, for example:
 
