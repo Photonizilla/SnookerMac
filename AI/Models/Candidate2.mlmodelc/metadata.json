@@ -67,7 +67,7 @@
       "com.github.apple.coremltools.version" : "9.0",
       "com.github.apple.coremltools.source_dialect" : "TorchScript"
     },
-    "generatedClassName" : "Candidate2",
+    "generatedClassName" : "Model",
     "method" : "predict"
   }
 ]

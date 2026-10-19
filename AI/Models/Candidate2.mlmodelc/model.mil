@@ -39,7 +39,7 @@ program(1.0)
             tensor<int32, [1]> var_47_dilations_0 = const()[name = tensor<string, []>("op_47_dilations_0"), val = tensor<int32, [1]>([1])];
             tensor<int32, []> var_47_groups_0 = const()[name = tensor<string, []>("op_47_groups_0"), val = tensor<int32, []>(1)];
             tensor<fp16, [7, 128, 1]> head_weight_to_fp16 = const()[name = tensor<string, []>("head_weight_to_fp16"), val = tensor<fp16, [7, 128, 1]>(BLOBFILE(path = tensor<string, []>("@model_path/weights/weight.bin"), offset = tensor<uint64, []>(296128)))];
-            tensor<fp16, [7]> head_bias_to_fp16 = const()[name = tensor<string, []>("head_bias_to_fp16"), val = tensor<fp16, [7]>([-0x1.a48p-5, 0x1.718p-5, 0x1.544p-6, -0x1.85p-6, -0x1.0c4p-4, -0x1.004p-5, -0x1.18p-2])];
+            tensor<fp16, [7]> head_bias_to_fp16 = const()[name = tensor<string, []>("head_bias_to_fp16"), val = tensor<fp16, [7]>([-0x1.258p-6, 0x1.678p-7, 0x1.35cp-3, -0x1.188p-4, -0x1.67cp-7, 0x1.644p-6, -0x1.42cp-2])];
             tensor<fp16, [1, 7, 1]> var_47_cast_fp16 = conv(bias = head_bias_to_fp16, dilations = var_47_dilations_0, groups = var_47_groups_0, pad = var_47_pad_0, pad_type = var_47_pad_type_0, strides = var_47_strides_0, weight = head_weight_to_fp16, x = input_13_cast_fp16)[name = tensor<string, []>("op_47_cast_fp16")];
             tensor<int32, [1]> y_axes_0 = const()[name = tensor<string, []>("y_axes_0"), val = tensor<int32, [1]>([-1])];
             tensor<fp16, [1, 7]> y_cast_fp16 = squeeze(axes = y_axes_0, x = var_47_cast_fp16)[name = tensor<string, []>("y_cast_fp16")];
