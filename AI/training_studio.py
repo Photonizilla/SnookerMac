@@ -201,6 +201,12 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
         play.append("--hard")
     if task in ("full_candidate", "train_candidate", "play_candidate"):
         play += ["--candidate-policy", str(compiled)]
+    if task == "full_shot":
+        # The shot-only network: the flat position in, the whole stroke out. `--policy`, not
+        # `--candidate-policy` — otherwise the test frame would quietly be the search.
+        play += ["--policy", str(compiled)]
+    if task == "full_decider":
+        play += ["--decider", str(compiled)]
     if task == "full_exact":
         # Both are compiled earlier in this same run, so the paths are the ones the test frame will use.
         play += ["--decider", str(folder / "Decider.mlmodelc"),
