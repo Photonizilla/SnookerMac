@@ -1443,6 +1443,8 @@ enum ComputerOpponent {
         check(scene.deepLearnedIsOn, "the Deep Learned switch turns on")
         scene.startNewGame(mode: .computerVersusComputer, difficulty: .exact)
         check(scene.computerIsDeepLearned, "and the exact player is the network")
+        step(8)
+        print("deep learned: on — the computer's last decision: \(scene.theComputerPlan)")
         if scene.deepLearnedIsOn { scene.toggleDeepLearning() }
         scene.startNewGame(mode: .computerVersusComputer, difficulty: .hard)
         check(!scene.computerIsDeepLearned, "the switch does nothing to Hard")

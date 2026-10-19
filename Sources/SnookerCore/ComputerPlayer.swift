@@ -334,6 +334,10 @@ public final class ComputerPlayer {
     public func nextAction(for driver: FrameDriver) -> Action {
         let state = driver.game.state
         guard !state.frameOver, state.currentPlayer == playerIndex else { return .wait }
+        // A stroke being played is not a decision: the cue is moving and the balls are running. Without
+        // this, a pure network could be asked mid-charge and answer "shoot" again, and the charge would
+        // never be released.
+        if driver.mode == .charging || driver.mode == .simulating { return .wait }
         // The pure network: it sees the position and the rules' own list of what is possible, and answers.
         if let decideEverything {
             if var action = decideEverything(policySituation(for: driver)) {
@@ -353,6 +357,8 @@ public final class ComputerPlayer {
                     // the angle, exactly as it is for a searched shot.
                     action = .shoot(theShotAsItWillBePlayed(ComputerPlayer.legalShot(played)))
                 }
+                lastPlan = "the network's decision — \(action)"
+                lastIntent = .neural
                 return action
             }
             return .wait

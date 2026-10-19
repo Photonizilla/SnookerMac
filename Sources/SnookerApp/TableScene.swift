@@ -75,6 +75,14 @@ final class TableScene: SKScene {
     var computerIsDeepLearned: Bool {
         computers.values.contains { $0.decideEverything != nil || $0.policy != nil || $0.shotPolicy != nil }
     }
+    /// What the computer last decided, for the harness: a line that says whether a network or the search
+    /// chose it ("the network's shot —…" against "pot red …").
+    var theComputerPlan: String {
+        if let plan = computers[controller.game.state.currentPlayer]?.lastPlan, !plan.isEmpty {
+            return plan
+        }
+        return computers.values.map(\.lastPlan).first(where: { !$0.isEmpty }) ?? "-"
+    }
     /// Whether the computer is playing that seat.
     func isPlayingTheComputer(_ seat: Int) -> Bool { computers[seat] != nil }
     var computerDifficulty: ComputerPlayer.Difficulty {
