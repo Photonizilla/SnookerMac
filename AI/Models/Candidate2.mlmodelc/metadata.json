@@ -1,15 +1,15 @@
 [
   {
     "metadataOutputVersion" : "3.0",
-    "shortDescription" : "A score for this proposed shot, and the stroke to play instead: aim sin\/cos, power, side, vertical, lift\/45°",
+    "shortDescription" : "Every decision a player makes from PositionFeatures and the rules' masks: action logits, stroke, placement logits, colour logits",
     "outputSchema" : [
       {
         "hasShapeFlexibility" : "0",
         "isOptional" : "0",
         "dataType" : "Float16",
-        "formattedType" : "MultiArray (Float16 1 × 7)",
+        "formattedType" : "MultiArray (Float16 1 × 88)",
         "shortDescription" : "",
-        "shape" : "[1, 7]",
+        "shape" : "[1, 88]",
         "name" : "decision",
         "type" : "MultiArray"
       }
@@ -20,16 +20,16 @@
     ],
     "specificationVersion" : 7,
     "mlProgramOperationTypeHistogram" : {
-      "Concat" : 1,
+      "Concat" : 2,
       "Ios16.cast" : 1,
-      "SliceByIndex" : 5,
+      "SliceByIndex" : 4,
       "Ios16.sigmoid" : 2,
-      "Ios16.conv" : 4,
+      "Ios16.conv" : 8,
       "Ios16.add" : 1,
-      "Ios16.relu" : 3,
+      "Ios16.relu" : 4,
       "Ios16.realDiv" : 1,
       "Ios16.reduceL2Norm" : 1,
-      "Squeeze" : 1,
+      "Squeeze" : 4,
       "ExpandDims" : 1,
       "Ios16.tanh" : 1
     },
@@ -54,9 +54,9 @@
         "hasShapeFlexibility" : "0",
         "isOptional" : "0",
         "dataType" : "Float32",
-        "formattedType" : "MultiArray (Float32 1 × 191)",
+        "formattedType" : "MultiArray (Float32 1 × 240)",
         "shortDescription" : "",
-        "shape" : "[1, 191]",
+        "shape" : "[1, 240]",
         "name" : "position",
         "type" : "MultiArray"
       }

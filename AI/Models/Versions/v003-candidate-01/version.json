@@ -1,0 +1,16 @@
+{
+  "session": "candidate-01",
+  "parent": "v002-candidate-01",
+  "created": "2026-10-19 23:22",
+  "task": "full_decider",
+  "teacher": "hard",
+  "frames": 35,
+  "epochs": 200,
+  "hidden": 256,
+  "seed": 2,
+  "models": [
+    "Model.mlmodelc",
+    "Model.mlpackage",
+    "Model.mlpackage.pt"
+  ]
+}

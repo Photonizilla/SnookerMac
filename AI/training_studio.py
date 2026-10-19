@@ -292,7 +292,7 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
         # The network plays itself with the models already in this session; its own decisions are the
         # samples and **who won the frame** is the only weight. Then old and new play each other: a round
         # counts as an improvement only if the new model wins the match.
-        decider = folder / "Decider.mlmodelc"
+        bootstrap, decider = self_play_decider(folder)
         candidate = folder / "Model.mlmodelc"
         play_self = [engine, "--ai-selfplay-wins", str(folder / "selfplay.bin"),
                      "--decider", str(decider),
@@ -311,7 +311,7 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                  "--frames", str(max(2, int(config.get("frames", 8)) // 2))]
         if candidate.exists():
             match += ["--candidate-policy", str(candidate)]
-        return [("The network plays itself", play_self),
+        return bootstrap + [("The network plays itself", play_self),
                 ("Keeping the old model", keep_old),
                 ("Training on the frames it won", fine_tune),
                 ("Compiling the new model", compile_decider),
@@ -319,7 +319,7 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
     if task == "selfplay_breaks":
         # The same round, weighted by the **highest break** each side made rather than by who won: an
         # 80 break in a lost frame still teaches the decisions that built it.
-        decider = folder / "Decider.mlmodelc"
+        bootstrap, decider = self_play_decider(folder)
         candidate = folder / "Model.mlmodelc"
         play_self = [engine, "--ai-selfplay-wins", str(folder / "breaks.bin"),
                      "--decider", str(decider),
@@ -338,7 +338,7 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                  "--frames", str(max(2, int(config.get("frames", 8)) // 2))]
         if candidate.exists():
             match += ["--candidate-policy", str(candidate)]
-        return [("The network plays itself", play_self),
+        return bootstrap + [("The network plays itself", play_self),
                 ("Keeping the old model", keep_old),
                 ("Training on the frames with the highest breaks", fine_tune),
                 ("Compiling the new model", compile_decider),
@@ -465,6 +465,30 @@ def init_weights(config: dict, kind: str) -> Path | None:
     name = "Decider.mlpackage.pt" if kind == "decider" else "Model.mlpackage.pt"
     path = VERSIONS / version / name
     return path if path.is_file() else None
+
+
+def self_play_decider(folder: Path) -> tuple[list[tuple[str, list[str]]], Path]:
+    """The decision model a self-play round starts from.
+
+    A session that only trained a stroke has no decision model, and self-play is about deciding. If one is
+    deployed (and its version keeps the torch weights), it is copied into the session as the starting
+    point; otherwise the round stops with a clear message rather than starting and failing.
+    """
+    decider = folder / "Decider.mlmodelc"
+    weights = folder / "Decider.mlpackage.pt"
+    if decider.is_dir() and weights.is_file():
+        return [], decider
+    deployed = read_deployed().get("decider", "")
+    version = VERSIONS / deployed if deployed else None
+    if version and (version / "Decider.mlmodelc").is_dir() and (version / "Decider.mlpackage.pt").is_file():
+        stage = "Copying the deployed decision model into this session"
+        return ([("Creating the session folder", ["/bin/mkdir", "-p", str(folder)]),
+                 (stage, ["/bin/cp", "-R", str(version / "Decider.mlmodelc"), str(decider)]),
+                 (stage, ["/bin/cp", str(version / "Decider.mlpackage.pt"), str(weights)])],
+                decider)
+    raise SystemExit(
+        f"{folder.name} has no decision model to continue. Run Full: exact network (or Full: all decisions) "
+        "in this session first, or deploy a version that has one.")
 
 
 def run_stages(stages: list[tuple[str, list[str]]]) -> None:
