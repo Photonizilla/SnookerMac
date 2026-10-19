@@ -86,7 +86,11 @@ final class TableScene: SKScene {
         guard !computers.isEmpty else { return "Human vs Human" }
         var parts = [computers.count == 2 ? "Computer vs Computer" : "Human vs Computer",
                      computerDifficulty.rawValue.capitalized]
-        if computerIsDeepLearned { parts.append("Deep Learned") }
+        // The switch itself, not just the effect: it is on the menu, so it is on the line, and when it is
+        // on in a difficulty that ignores it the line says so rather than pretending the network is playing.
+        var learned = deepLearnedIsOn ? "Deep Learned: On" : "Deep Learned: Off"
+        if deepLearnedIsOn, computerDifficulty != .exact { learned += " (Exact only)" }
+        parts.append(learned)
         return parts.joined(separator: " · ")
     }
     /// What the small mode line says, for the harness.

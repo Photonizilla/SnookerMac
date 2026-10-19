@@ -1444,7 +1444,8 @@ enum ComputerOpponent {
         scene.startNewGame(mode: .computerVersusComputer, difficulty: .exact)
         step(1)
         check(scene.computerIsDeepLearned, "and the exact player is the network")
-        check(scene.theGameModeOnScreen.contains("Exact") && scene.theGameModeOnScreen.contains("Deep Learned"),
+        check(scene.theGameModeOnScreen.contains("Exact")
+                && scene.theGameModeOnScreen.contains("Deep Learned: On"),
               "the mode is on the screen (\(scene.theGameModeOnScreen))")
         step(8)
         print("deep learned: on — the computer's last decision: \(scene.theComputerPlan)")
@@ -1454,6 +1455,8 @@ enum ComputerOpponent {
         check(!scene.computerIsDeepLearned, "the switch does nothing to Hard")
         check(scene.theGameModeOnScreen.contains("Hard"),
               "the mode on the screen follows the difficulty (\(scene.theGameModeOnScreen))")
+        check(scene.theGameModeOnScreen.contains("Deep Learned: Off"),
+              "and shows the switch as it is set (\(scene.theGameModeOnScreen))")
 
         // Watching: while the computer is at the table the mouse is the player's **own head** and their
         // feet are their own — and none of it touches the shot the computer is playing.
