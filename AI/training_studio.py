@@ -134,8 +134,8 @@ def has_training_packages(python: str) -> bool:
         # fail at the first conversion ("BlobWriter not loaded"). The smoke test converts a tiny model.
         result = subprocess.run([python, "-c",
                                  "import torch, coremltools as ct;"
-                                 "m = torch.jit.trace(torch.nn.Conv1d(4, 2, 1), torch.zeros(1, 4));"
-                                 "ct.convert(m, inputs=[ct.TensorType(name='x', shape=(1, 4))],"
+                                 "m = torch.jit.trace(torch.nn.Conv1d(4, 2, 1), torch.zeros(1, 4, 1));"
+                                 "ct.convert(m, inputs=[ct.TensorType(name='x', shape=(1, 4, 1))],"
                                  " outputs=[ct.TensorType(name='y')], convert_to='mlprogram')"],
                                 capture_output=True, timeout=240)
         ok = result.returncode == 0
@@ -374,8 +374,8 @@ class Handler(BaseHTTPRequestHandler):
                 "import torch, coremltools as ct;"
                 "print('torch', torch.__version__, 'coremltools', ct.__version__);"
                 "print('mps', torch.backends.mps.is_available());"
-                "m = torch.jit.trace(torch.nn.Conv1d(4, 2, 1), torch.zeros(1, 4));"
-                "ct.convert(m, inputs=[ct.TensorType(name='x', shape=(1, 4))],"
+                "m = torch.jit.trace(torch.nn.Conv1d(4, 2, 1), torch.zeros(1, 4, 1));"
+                "ct.convert(m, inputs=[ct.TensorType(name='x', shape=(1, 4, 1))],"
                 " outputs=[ct.TensorType(name='y')], convert_to='mlprogram');"
                 "print('coreml conversion ok')"
             )
@@ -640,7 +640,8 @@ $("check").onclick = async () => {
   $("log").textContent = "Checking the training environment…\n";
   const r = await (await fetch("/api/check", { method:"POST", headers:{"Content-Type":"application/json"},
                                                body: JSON.stringify(config()) })).json();
-  $("log").textContent += r.log + "\n" + (r.ok ? "Ready to train." : "torch/coremltools were not found in that Python.");
+  $("log").textContent += r.log + "\n" + (r.ok ? "Ready to train."
+    : "The check failed — the log above says why (missing packages, or Core ML conversion unavailable).");
 };
 defaults().then(() => { $("log").textContent = "Ready. Pick a preset, then Run."; });
 </script>
