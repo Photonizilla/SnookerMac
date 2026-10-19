@@ -4,6 +4,38 @@
 stroke — aim, power, side spin, vertical spin and lift — with its dataset export, supervised training, Core
 ML conversion and self-play loop. The rest of this file is the value network the search uses at its leaves.
 
+## Training Studio
+
+For running a session without the command line:
+
+```sh
+python3 AI/training_studio.py
+```
+
+It opens a local page (only on this Mac, on `127.0.0.1`) with four presets — **Shot policy**, **Candidate +
+swerve**, **All decisions** and **Exact network** — and the knobs that matter:
+
+- the teacher: Hard (σ 0.03°), Exact (σ 0), Medium or Easy;
+- how much data: frames, reds and seed, plus the **aim sweep** that puts swerve lines into the labels;
+- the model: epochs, hidden width, batch, learning rate;
+- the session name and folder, the Snooker engine and the **Python for training**.
+
+**Check environment** reports the Python, torch, coremltools and whether MPS is available. **Run** executes
+the chosen task — a full run is export → train → Core ML conversion → test frame — and streams the log;
+**Stop** cancels it and **Open session folder** reveals the dataset, model, compiled `.mlmodelc` and weights.
+Sessions are written under `AI/Sessions/<name>/`.
+
+The studio itself needs only the Python standard library; the training needs `torch` and `coremltools` in
+the interpreter you point it at, for example:
+
+```sh
+python3 -m venv AI/.venv
+AI/.venv/bin/pip install torch coremltools
+```
+
+then put `AI/.venv/bin/python` in the *Python for training* field. The engine defaults to
+`build/Snooker.app/Contents/MacOS/Snooker`; rebuild the app with `./Scripts/build-app.sh Release` first.
+
 The computer player in `Sources/SnookerCore` plays by searching the real physics: it proposes shots, plays
 each of them out in full, and judges the position it is left with. That judgement —
 `ComputerPlayer.value(of:result:)` — is one small function of hand-written arithmetic, and it is the one
