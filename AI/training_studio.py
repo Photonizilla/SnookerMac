@@ -89,9 +89,7 @@ def find_training_python() -> str:
     override = os.environ.get("SNOOKER_PYTHON", "").strip()
     candidates = [override,
                   str(ROOT / "AI" / ".venv" / "bin" / "python"),
-                  "/private/tmp/snooker-ai/venv/bin/python",
-                  shutil.which("python3") or "",
-                  sys.executable]
+                  "/private/tmp/snooker-ai/venv/bin/python"]
     for candidate in candidates:
         if candidate and Path(candidate).exists() and supported_python(candidate):
             return candidate
