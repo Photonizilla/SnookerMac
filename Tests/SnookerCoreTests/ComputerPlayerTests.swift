@@ -639,6 +639,22 @@ final class ComputerPlayerTests: XCTestCase {
         XCTAssertEqual(played.power, 0.5, accuracy: 1e-12)
     }
 
+    /// A ball that is off the table — potted, or in hand — keeps the place it was last seen when the world
+    /// is rebuilt. The rules engine writes positions only for balls on the table, so its copy of a potted
+    /// ball is the layout from **before** the stroke: using that is the ball reappearing on the table.
+    func testAnOffTableBallKeepsWhereItWasLastSeenWhenTheWorldIsRebuilt() {
+        let driver = straightRedSetup()
+        // The red is on the table at (400, 400) in the rules. Hand the world a copy of it off the table,
+        // at a pocket, as a pot leaves it.
+        let pocket = PocketID.allCases[0].cut.mouth
+        driver.game.withState { state in state.ballsOnTable.remove(BallID.firstRed) }
+        driver.world.putBack(Ball(id: BallID.firstRed, color: .red, position: pocket, onTable: false))
+        driver.syncWorldFromState()
+        let after = driver.balls.first { $0.id == BallID.firstRed }
+        XCTAssertEqual(after?.position, pocket, "the potted ball is where it went in, not where it started")
+        XCTAssertEqual(after?.onTable, false)
+    }
+
     func testTheSamplerDrawsFromANormalDistribution() {
         var generator = SeededRandom(seed: 99)
         let draws = (0..<20_000).map { _ in

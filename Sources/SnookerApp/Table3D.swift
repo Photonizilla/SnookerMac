@@ -3716,8 +3716,17 @@ final class Table3D {
                 node.simdPosition = Table3D.point(ball.position, height: ball.height)
             } else if !markedForDropping.contains(ball.id) {
                 markedForDropping.insert(ball.id)
-                node.simdPosition = Table3D.point(ball.position, height: ball.height)
-                drop(node)
+                // A ball that is off the table is taken away from **where it was last drawn** — the pocket
+                // it rolled into. It must never be moved to `ball.position` first: after
+                // `FrameDriver.syncWorldFromState` the world's copy of a potted ball carries the layout it
+                // had **before the stroke**, and a soft pot is finished at the very end of the stroke, so
+                // this is the first frame the view sees it off the table. Moving the node there for the
+                // fade is the ball reappearing on the table and then vanishing.
+                if node.isHidden {
+                    node.opacity = 1
+                } else {
+                    drop(node)
+                }
             }
         }
         for (id, node) in ballNodes where !live.contains(id) {

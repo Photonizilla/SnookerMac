@@ -361,7 +361,19 @@ public final class FrameDriver {
     /// Rebuild the physics world from the rules engine's ball layout.
     public func syncWorldFromState() {
         let falling = world.balls.filter(\.isFalling)
+        let wasThere = Dictionary(uniqueKeysWithValues: world.balls.map { ($0.id, $0) })
         world = FrameDriver.makeWorld(for: game.state)
+        // A ball that is **off** the table — potted, or picked up to be placed — keeps the place it was
+        // last seen. The rules engine writes positions only for balls on the table, so its copy of a potted
+        // ball is the layout from before the stroke; rebuilding the world from that is a potted ball
+        // jumping back onto the table, which is what a soft pot used to show for a frame.
+        for ball in world.balls where !ball.onTable {
+            guard let before = wasThere[ball.id] else { continue }
+            var kept = ball
+            kept.position = before.position
+            kept.height = before.height
+            world.putBack(kept)
+        }
         // A ball on its way to the floor is off the table already, so a world built from the state would
         // have it gone. It is carried over instead, and goes on falling until it lands.
         for ball in falling { world.putBack(ball) }
