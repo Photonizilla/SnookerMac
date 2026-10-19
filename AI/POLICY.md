@@ -38,6 +38,12 @@ stroke scored, whether it fouled, whether it kept the table, and whether its pla
 angle is a pair so the wrap at ±180° is not a cliff. The outcomes are not used by the supervised loss yet;
 they are there for the self-play weighting that comes next.
 
+**A self-play round is played with σ = 0.03° of aim error on every shot** (`ComputerOpponent.selfPlayAimError`),
+whatever difficulty the teacher is — including Exact. A network trained only on shots played without a miss
+learns a world without misses; the fluctuation makes the states it visits the states of a fallible player.
+The teacher's labels in a DAgger round stay clean, and a win-weighted round records the shots the fallible
+player actually took.
+
 ## What the first model does
 
 Trained on 570 shots from 12 Hard frames (10 reds, varied starting layouts), held out:

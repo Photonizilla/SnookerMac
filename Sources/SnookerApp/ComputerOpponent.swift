@@ -51,6 +51,11 @@ enum ComputerOpponent {
 
     static func name(of player: Int) -> String { player == 0 ? "Computer A" : "Computer B" }
 
+    /// The cue action a **self-play** round is played with: σ = 0.03° of aim error on every shot. A network
+    /// trained only on shots played without a miss learns a world without misses — the states it visits are
+    /// perfect — so the round itself is played by a fallible cue, and the data comes from that player.
+    static let selfPlayAimError = 0.03 * Double.pi / 180
+
     // MARK: - Playing frames
 
     static func playFrames(_ count: Int, options: Options) -> Int32 {
@@ -258,7 +263,7 @@ enum ComputerOpponent {
                             ComputerPlayer(playerIndex: 1, difficulty: .hard)]
             for player in learners {
                 player.policy = policy
-                player.aimError = options.cueAction
+                player.aimError = ComputerOpponent.selfPlayAimError
                 player.decideTheDraw = { frame % 2 }
             }
             for teacher in teachers {
@@ -582,7 +587,7 @@ enum ComputerOpponent {
                             ComputerPlayer(playerIndex: 1, difficulty: .hard)]
             for player in learners {
                 player.decideEverything = decision
-                player.aimError = options.cueAction
+                player.aimError = ComputerOpponent.selfPlayAimError
                 player.decideTheDraw = { frame % 2 }
             }
             for teacher in teachers {
@@ -638,6 +643,8 @@ enum ComputerOpponent {
             LearnedPolicy.loadCandidate(path: $0, describe: false)
         }
         let start = Date()
+        print(String(format: "self-play cue action: σ %.2f° of aim error on every shot",
+                     ComputerOpponent.selfPlayAimError * 180 / .pi))
         var samples: [AllPolicySample] = []
         var wins = [0, 0]
         for frame in 0..<options.frames {
@@ -648,7 +655,7 @@ enum ComputerOpponent {
                 let player = ComputerPlayer(playerIndex: seat, difficulty: options.difficulty)
                 player.decideEverything = decision
                 player.shotPolicy = shotPolicy
-                player.aimError = options.cueAction
+                player.aimError = ComputerOpponent.selfPlayAimError
                 player.decideTheDraw = { frame % 2 }
                 return player
             }
@@ -711,7 +718,7 @@ enum ComputerOpponent {
             let models = aSeat == 0 ? [a, b] : [b, a]
             let players = (0...1).map { seat -> ComputerPlayer in
                 let player = ComputerPlayer(playerIndex: seat, difficulty: options.difficulty)
-                player.aimError = options.cueAction
+                player.aimError = ComputerOpponent.selfPlayAimError
                 player.decideEverything = models[seat]
                 player.shotPolicy = shotPolicy
                 player.decideTheDraw = { frame % 2 }
