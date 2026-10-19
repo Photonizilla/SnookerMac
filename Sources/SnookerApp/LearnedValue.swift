@@ -5,7 +5,17 @@ import SnookerCore
 /// Where a learned model is looked for: the app's own resources first (the build script copies the compiled
 /// models in), then the project's `AI/Models` for a harness run from the repository.
 enum Models {
+    /// Where a deployed model lives: a folder the training studio can write to, and the app reads, so a run
+    /// does not need the app bundle rebuilt to be picked up.
+    static var deployedDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        return base.appendingPathComponent("Snooker/Models", isDirectory: true)
+    }
+
     static func url(_ name: String) -> URL {
+        let deployed = deployedDirectory.appendingPathComponent(name)
+        if FileManager.default.fileExists(atPath: deployed.path) { return deployed }
         if let resource = Bundle.main.resourceURL?.appendingPathComponent(name),
            FileManager.default.fileExists(atPath: resource.path) {
             return resource

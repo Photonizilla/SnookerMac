@@ -253,7 +253,7 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                          "--seed", str(int(config.get("seed", 1)))]
         if config.get("aimSweep"):
             clean_teacher.append("--aim-sweep")
-        return [("Exporting the decisions", [engine, "--ai-export-all",
+        stages = [("Exporting the decisions", [engine, "--ai-export-all",
                                              str(decider_dataset)] + clean_teacher),
                 ("Exporting the candidate rows",
                  [engine, "--ai-export-candidates", str(dataset)] + clean_teacher),
@@ -262,6 +262,14 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                 ("Compiling the stroke model", compile_model),
                 ("Compiling the decisions model", decider_compile),
                 ("A test frame", play)]
+        # A successful Exact run is the player the ESC menu switches on, so it is deployed too: the app
+        # reads the deployed folder at the next new game, with no rebuild.
+        return stages + deploy_stages(folder)
+    if task == "deploy":
+        stages = deploy_stages(folder)
+        if len(stages) == 1:
+            raise SystemExit("this session has no compiled models to deploy — run a full training first")
+        return stages
     if task == "setup_python":
         venv = ROOT / "AI" / ".venv"
         return [("Creating the training environment",
@@ -304,6 +312,23 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                 ("Compiling the new model", compile_decider),
                 ("A match: old against new", match)]
     raise SystemExit(f"unknown task {task}")
+
+
+def deploy_stages(folder: Path) -> list[tuple[str, list[str]]]:
+    """Copy a session's compiled models where the app looks for them.
+
+    `~/Library/Application Support/Snooker/Models` is checked before the app bundle, so the Exact + Deep
+    Learned player picks a newly trained model up at the next new game — no rebuild, no Xcode.
+    """
+    support = Path.home() / "Library" / "Application Support" / "Snooker" / "Models"
+    stages = [("Creating the models folder", ["/bin/mkdir", "-p", str(support)])]
+    for source, name in (("Model.mlmodelc", "Candidate2.mlmodelc"),
+                         ("Decider.mlmodelc", "Decider2.mlmodelc")):
+        if (folder / source).exists():
+            stages.append((f"Deploying {name}", ["/bin/rm", "-rf", str(support / name)]))
+            stages.append((f"Deploying {name}", ["/bin/cp", "-R", str(folder / source),
+                                                 str(support / name)]))
+    return stages
 
 
 def run_stages(stages: list[tuple[str, list[str]]]) -> None:
@@ -557,6 +582,7 @@ PAGE = r"""<!doctype html>
       <option value="play_candidate">Test frame with the candidate model</option>
       <option value="convert_candidate">Convert the saved weights (no training)</option>
       <option value="selfplay_wins">Self-play: network vs itself, win-weighted (continue this session)</option>
+      <option value="deploy">Deploy the session's models to the game</option>
       <option value="setup_python">Set up the training Python (venv + install)</option>
     </select>
     <label for="session">Session name</label>
@@ -591,6 +617,7 @@ PAGE = r"""<!doctype html>
       <button class="small" id="check">Check environment</button>
       <button class="small" id="setup">Set up Python</button>
       <button class="small" id="reveal">Open session folder</button>
+      <button class="small" id="deploy">Deploy to game</button>
     </div>
     <div class="actions">
       <button class="primary" id="run">Run</button>
@@ -674,6 +701,7 @@ $("setup").onclick = () => {
 $("stop").onclick = () => fetch("/api/stop", { method:"POST", headers:{"Content-Type":"application/json"}, body:"{}" });
 $("reveal").onclick = () => fetch("/api/reveal", { method:"POST", headers:{"Content-Type":"application/json"},
                                                    body: JSON.stringify(config()) });
+$("deploy").onclick = () => start("deploy");
 $("check").onclick = async () => {
   $("log").textContent = "Checking the training environment…\n";
   const r = await (await fetch("/api/check", { method:"POST", headers:{"Content-Type":"application/json"},
