@@ -2,6 +2,19 @@ import Foundation
 import CoreML
 import SnookerCore
 
+/// Where a learned model is looked for: the app's own resources first (the build script copies the compiled
+/// models in), then the project's `AI/Models` for a harness run from the repository.
+enum Models {
+    static func url(_ name: String) -> URL {
+        if let resource = Bundle.main.resourceURL?.appendingPathComponent(name),
+           FileManager.default.fileExists(atPath: resource.path) {
+            return resource
+        }
+        return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("AI/Models").appendingPathComponent(name)
+    }
+}
+
 /// The learned value function, when there is one to hand: a small network that reads a position's
 /// features and answers with the points the player at the table is expected to score from it.
 ///

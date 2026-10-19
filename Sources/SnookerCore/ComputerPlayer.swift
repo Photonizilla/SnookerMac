@@ -93,7 +93,7 @@ public struct PolicySituation: Sendable {
 public final class ComputerPlayer {
 
     public enum Difficulty: String, Sendable, CaseIterable {
-        case easy, medium, hard
+        case easy, medium, hard, exact
 
         /// How many shots are put to the physics, and how hard the geometry is allowed to be.
         public var settings: ShotGenerator.Settings {
@@ -110,7 +110,7 @@ public final class ComputerPlayer {
                 settings.safetyLimit = 6
                 settings.escapeBalls = 4
                 settings.escapeLimit = 40
-            case .hard:
+            case .hard, .exact:
                 settings.potLimit = 26
                 settings.safetyLimit = 10
                 settings.escapeBalls = 6
@@ -125,7 +125,7 @@ public final class ComputerPlayer {
             switch self {
             case .easy: return [0]
             case .medium: return [0, -0.5, 0.4]
-            case .hard: return [-0.6, -0.25, 0, 0.35]
+            case .hard, .exact: return [-0.6, -0.25, 0, 0.35]
             }
         }
 
@@ -137,7 +137,7 @@ public final class ComputerPlayer {
             switch self {
             case .easy: return [1]
             case .medium: return [0.7, 1, 1.35, 1.9]
-            case .hard: return [0.7, 0.9, 1.15, 1.5]
+            case .hard, .exact: return [0.7, 0.9, 1.15, 1.5]
             }
         }
 
@@ -148,7 +148,7 @@ public final class ComputerPlayer {
             switch self {
             case .easy: return [0]
             case .medium: return [0, -0.3, 0.3]
-            case .hard: return [0, -0.35, 0, 0.35]
+            case .hard, .exact: return [0, -0.35, 0, 0.35]
             }
         }
 
@@ -156,7 +156,7 @@ public final class ComputerPlayer {
             switch self {
             case .easy: return [0]
             case .medium: return [0, 10 * .pi / 180]
-            case .hard: return [0, 8 * .pi / 180, 20 * .pi / 180]
+            case .hard, .exact: return [0, 8 * .pi / 180, 20 * .pi / 180]
             }
         }
 
@@ -167,6 +167,7 @@ public final class ComputerPlayer {
             case .easy: return 10
             case .medium: return 40
             case .hard: return 90
+            case .exact: return 120
             }
         }
 
@@ -182,6 +183,7 @@ public final class ComputerPlayer {
             case .easy: return 0.2
             case .medium: return 0.1
             case .hard: return 0.03
+            case .exact: return 0
             }
         }
 
@@ -309,7 +311,7 @@ public final class ComputerPlayer {
         self.elevations = difficulty.elevations
         self.rolloutBudget = difficulty.rolloutBudget
         self.aimError = difficulty.aimError
-        self.tuneAgainstTheLine = difficulty == .hard
+        self.tuneAgainstTheLine = difficulty == .hard || difficulty == .exact
     }
 
     private func applyTheDifficulty() {
@@ -324,7 +326,7 @@ public final class ComputerPlayer {
         // accurate enough that its misses are not what the comparison is mostly about. Measured: Hard goes
         // from 39% of strokes potted and breaks of 11 and 16 to 44% and 20 and 28 over three frames; Medium
         // gets worse. `--line-tuning` / `--no-line-tuning` overrides it.
-        tuneAgainstTheLine = difficulty == .hard
+        tuneAgainstTheLine = difficulty == .hard || difficulty == .exact
     }
 
     // MARK: - What to do next

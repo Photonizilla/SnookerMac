@@ -71,6 +71,10 @@ final class TableScene: SKScene {
     }
 
     var computerOpponentIsOn: Bool { !computers.isEmpty }
+    /// Whether a computer at the table is running on a learned network rather than the search.
+    var computerIsDeepLearned: Bool {
+        computers.values.contains { $0.decideEverything != nil || $0.policy != nil || $0.shotPolicy != nil }
+    }
     /// Whether the computer is playing that seat.
     func isPlayingTheComputer(_ seat: Int) -> Bool { computers[seat] != nil }
     var computerDifficulty: ComputerPlayer.Difficulty {
@@ -94,18 +98,33 @@ final class TableScene: SKScene {
     /// True while a game between two computers is **paused**: the question is up and neither of them plays.
     private(set) var theGameIsPaused = false
 
+    /// The ESC menu's **Deep Learned** switch. It only has a meaning in the Exact mode: there it chooses
+    /// between the exact *search* player and the exact *network* player. In the other difficulties it is
+    /// shown and toggled, and ignored — there is no trained network for them yet.
+    private(set) var deepLearnedIsOn = false
+
+    func toggleDeepLearning() {
+        deepLearnedIsOn.toggle()
+        requestRefresh()
+    }
+
     /// Starts a new match with the players the player asked for: two people, a person and the computer, or
     /// the computer against itself. The seat the computer takes in a human game is drawn at random, so
     /// that a game against it is a game against it and not always the same seat.
     func startNewGame(mode: GameMode, difficulty: ComputerPlayer.Difficulty = .medium) {
+        let deepLearned = deepLearnedIsOn && difficulty == .exact
         for seat in 0...1 { setComputerOpponent(false, playing: seat) }
         switch mode {
         case .humanVersusHuman:
             break
         case .humanVersusComputer:
-            setComputerOpponent(true, difficulty: difficulty, playing: Bool.random() ? 0 : 1)
+            setComputerOpponent(true, difficulty: difficulty, playing: Bool.random() ? 0 : 1,
+                                deepLearned: deepLearned)
         case .computerVersusComputer:
-            for seat in 0...1 { setComputerOpponent(true, difficulty: difficulty, playing: seat) }
+            for seat in 0...1 {
+                setComputerOpponent(true, difficulty: difficulty, playing: seat,
+                                    deepLearned: deepLearned)
+            }
         }
         theGameIsPaused = false
         modeAwaitingADifficulty = nil
@@ -146,13 +165,26 @@ final class TableScene: SKScene {
     /// "Dr. Ker" — and the first player is the person at the keyboard.
     func setComputerOpponent(_ on: Bool, difficulty: ComputerPlayer.Difficulty = .medium,
                              playing player: Int = 1,
-                             aimError: Double? = nil) {
+                             aimError: Double? = nil,
+                             deepLearned: Bool = false) {
         if on {
             let computer = ComputerPlayer(playerIndex: player, difficulty: difficulty)
             // A cue action that never misses is not a player anyone would recognise: it is left slightly
             // fallible, and the search it runs takes that into account before it chooses. How fallible is
             // the difficulty's own business unless the caller has said otherwise.
             computer.aimError = aimError ?? difficulty.aimError
+            if deepLearned, difficulty == .exact {
+                let decider = LearnedPolicy.loadEverything(
+                    path: Models.url("Decider2.mlmodelc").path, describe: false)
+                let shot = LearnedPolicy.loadCandidate(
+                    path: Models.url("Candidate2.mlmodelc").path, describe: false)
+                if let decider, let shot {
+                    computer.decideEverything = decider
+                    computer.shotPolicy = shot
+                } else {
+                    print("the learned models did not load: the exact player stays the search")
+                }
+            }
             computers[player] = computer
         } else {
             computers[player] = nil
@@ -1634,16 +1666,21 @@ final class TableScene: SKScene {
             // The modes **are** the answer to the question: who plays the two seats. A mode with a
             // computer in it asks one more thing — how hard — and then the game begins.
             if let mode = modeAwaitingADifficulty {
-                addButton(title: "Easy", at: CGPoint(x: size.width / 2 - 170, y: firstRow), width: 130) { [weak self] in
-                    self?.startNewGame(mode: mode, difficulty: .easy)
+                let difficulties: [ComputerPlayer.Difficulty] = [.easy, .medium, .hard, .exact]
+                for (index, difficulty) in difficulties.enumerated() {
+                    let x = size.width / 2 + (Double(index) - 1.5) * 160
+                    addButton(title: difficulty.rawValue.capitalized,
+                              at: CGPoint(x: x, y: firstRow), width: 140) { [weak self] in
+                        self?.startNewGame(mode: mode, difficulty: difficulty)
+                    }
                 }
-                addButton(title: "Medium", at: CGPoint(x: size.width / 2, y: firstRow), width: 130) { [weak self] in
-                    self?.startNewGame(mode: mode, difficulty: .medium)
+                // The switch only has a meaning in Exact: there it chooses the network over the search.
+                addButton(title: deepLearnedIsOn ? "Deep Learned: On" : "Deep Learned: Off",
+                          at: CGPoint(x: size.width / 2 - 110, y: secondRow), width: 200,
+                          chosen: deepLearnedIsOn) { [weak self] in
+                    self?.toggleDeepLearning()
                 }
-                addButton(title: "Hard", at: CGPoint(x: size.width / 2 + 170, y: firstRow), width: 130) { [weak self] in
-                    self?.startNewGame(mode: mode, difficulty: .hard)
-                }
-                addButton(title: "Back", at: CGPoint(x: size.width / 2, y: secondRow), width: 110) { [weak self] in
+                addButton(title: "Back", at: CGPoint(x: size.width / 2 + 120, y: secondRow), width: 110) { [weak self] in
                     guard let self else { return }
                     self.modeAwaitingADifficulty = nil
                     self.requestRefresh()

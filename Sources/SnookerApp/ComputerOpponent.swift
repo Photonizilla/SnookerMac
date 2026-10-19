@@ -740,6 +740,7 @@ enum ComputerOpponent {
             }
             if arguments.contains("--hard") { difficulty = .hard }
             if arguments.contains("--medium") { difficulty = .medium }
+            if arguments.contains("--exact") { difficulty = .exact }
             verbose = !arguments.contains("--quiet")
             learned = arguments.contains("--learned")
             modelPath = ComputerOpponent.argument("--model", in: arguments)
@@ -1315,6 +1316,19 @@ enum ComputerOpponent {
             }
         }
         check(seatsSeen.count == 2, "and the computer's seat is drawn, not fixed (saw \(seatsSeen.sorted()))")
+
+        // The Exact mode and its Deep Learned switch. The switch only changes the player in Exact: off is
+        // the exact search, on is the exact network, and in Hard it is ignored.
+        scene.startNewGame(mode: .computerVersusComputer, difficulty: .exact)
+        check(scene.computerDifficulty == .exact, "the exact difficulty plays")
+        check(!scene.computerIsDeepLearned, "and is the search player while the switch is off")
+        if !scene.deepLearnedIsOn { scene.toggleDeepLearning() }
+        check(scene.deepLearnedIsOn, "the Deep Learned switch turns on")
+        scene.startNewGame(mode: .computerVersusComputer, difficulty: .exact)
+        check(scene.computerIsDeepLearned, "and the exact player is the network")
+        if scene.deepLearnedIsOn { scene.toggleDeepLearning() }
+        scene.startNewGame(mode: .computerVersusComputer, difficulty: .hard)
+        check(!scene.computerIsDeepLearned, "the switch does nothing to Hard")
 
         // Watching: while the computer is at the table the mouse is the player's **own head** and their
         // feet are their own — and none of it touches the shot the computer is playing.

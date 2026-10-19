@@ -29,4 +29,10 @@ fi
 
 rm -rf build/Snooker.app
 cp -R "$BUILT" build/Snooker.app
+# The learned players the ESC menu can switch on: the compiled models go into the app's resources, where
+# `Models.url` looks for them first.
+if [ -d AI/Models ]; then
+    mkdir -p build/Snooker.app/Contents/Resources
+    cp -R AI/Models/*.mlmodelc build/Snooker.app/Contents/Resources/ 2>/dev/null || true
+fi
 echo "Built: $PWD/build/Snooker.app"
