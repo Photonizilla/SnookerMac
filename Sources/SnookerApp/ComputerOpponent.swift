@@ -659,6 +659,7 @@ enum ComputerOpponent {
                      ComputerOpponent.selfPlayAimError * 180 / .pi))
         var samples: [AllPolicySample] = []
         var wins = [0, 0]
+        var bestBreak = [0, 0]
         for frame in 0..<options.frames {
             let driver = FrameDriver(playerNames: ["A", "B"])
             driver.game.decideTheDraw = { frame % 2 }
@@ -672,6 +673,7 @@ enum ComputerOpponent {
                 return player
             }
             var frameSamples: [(index: Int, who: Int)] = []
+            var highestBreak = [0, 0]
             var decisions = 0
             while !driver.game.state.frameOver, decisions < 900 {
                 let who = driver.game.state.currentPlayer
@@ -690,21 +692,29 @@ enum ComputerOpponent {
                     samples[index].points = Float(driver.lastResult?.pointsScored ?? 0)
                     samples[index].foul = driver.lastResult?.foul != nil ? 1 : 0
                     samples[index].kept = driver.game.state.currentPlayer == who ? 1 : 0
+                    highestBreak[who] = max(highestBreak[who], driver.game.state.breakScore)
                 }
             }
             if let winner = driver.game.state.winner {
                 wins[winner] += 1
                 for sample in frameSamples where sample.who == winner { samples[sample.index].won = 1 }
             }
+            for sample in frameSamples {
+                samples[sample.index].highestBreak = Float(highestBreak[sample.who])
+            }
+            bestBreak[0] = max(bestBreak[0], highestBreak[0])
+            bestBreak[1] = max(bestBreak[1], highestBreak[1])
             print("  frame \(frame + 1) of \(options.frames): \(decisions) decisions,"
                     + " \(driver.game.state.scores[0])–\(driver.game.state.scores[1])"
                     + " \(driver.game.state.winner.map { $0 == 0 ? "A" : "B" } ?? "unfinished"),"
+                    + " breaks \(highestBreak[0]) and \(highestBreak[1]),"
                     + " \(samples.count) samples, \(String(format: "%.0f", Date().timeIntervalSince(start))) s")
         }
         guard writeAllPolicySamples(samples, to: path) else { return 1 }
         let wonSamples = samples.filter { $0.won > 0 }.count
         print("wrote \(samples.count) self-play samples (\(wonSamples) from the frames that were won)"
-                + " to \(path); the frames were \(wins[0])–\(wins[1])")
+                + " to \(path); the frames were \(wins[0])–\(wins[1]);"
+                + " the highest breaks were \(bestBreak[0]) and \(bestBreak[1])")
         return 0
     }
 

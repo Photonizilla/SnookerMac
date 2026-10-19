@@ -68,6 +68,9 @@ Both write a self-play dataset, fine-tune the existing decision model from its w
 aside, and finish with a match between old and new — frames won are the acceptance for the win-weighted
 round, and the break distribution is the thing to watch for the break-weighted one.
 
+The export prints **each frame's highest break for both players** as it goes — `breaks 14 and 6` — and the
+run's two best at the end, so a break-weighted round can be followed without reading the dataset.
+
 A session that trained only a **stroke** has no decision model to continue. The round then borrows the
 **deployed version's** decision model and its torch weights, copies them into the session as the starting
 point, and says so in the log; if no version is deployed either, it stops with that reason rather than
