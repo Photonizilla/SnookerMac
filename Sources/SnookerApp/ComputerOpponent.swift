@@ -412,8 +412,13 @@ enum ComputerOpponent {
                         for (index, candidate) in candidates.enumerated() {
                             var cost = ShotGeometry.angleBetween(candidate.shot.angle, shot.angle)
                             if let wanted, case .pot(let ball, let pocket, _) = candidate.intent {
-                                cost += ball == wanted.ball ? -0.05 : 0.5
-                                if pocket == wanted.pocket { cost -= 0.02 }
+                                // The aim sweep can move the chosen shot 15° off its candidate, which is
+                                // more than the angle between two pockets of the same ball: the pocket
+                                // has to be matched first, or the label becomes a different shot.
+                                cost += ball == wanted.ball ? -0.05 : 0.8
+                                cost += pocket == wanted.pocket ? -0.02 : 0.8
+                            } else if wanted != nil {
+                                cost += 0.8
                             }
                             if cost < bestCost { bestCost = cost; bestIndex = index }
                         }

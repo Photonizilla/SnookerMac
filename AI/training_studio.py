@@ -33,7 +33,8 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 8765
 TRAINING_TASKS = {"train_shot", "train_candidate", "train_decider",
-                  "full_shot", "full_candidate", "full_decider", "full_exact"}
+                  "full_shot", "full_candidate", "full_decider", "full_exact",
+                  "convert_candidate"}
 PACKAGE_CACHE: dict[str, bool] = {}
 
 
@@ -92,8 +93,35 @@ def find_training_python() -> str:
                   shutil.which("python3") or "",
                   sys.executable]
     for candidate in candidates:
-        if candidate and Path(candidate).exists():
+        if candidate and Path(candidate).exists() and supported_python(candidate):
             return candidate
+    return compatible_interpreter()
+
+
+def python_minor(python: str) -> int:
+    """The interpreter's minor version, or 99 when it cannot even be run."""
+    try:
+        result = subprocess.run([python, "-c", "import sys; print(sys.version_info[1])"],
+                                capture_output=True, text=True, timeout=30)
+        return int(result.stdout.strip())
+    except Exception:  # noqa: BLE001
+        return 99
+
+
+def supported_python(python: str) -> bool:
+    """Core ML conversion needs coremltools' native extension, which does not exist for 3.14 yet."""
+    return python_minor(python) <= 13
+
+
+def compatible_interpreter() -> str:
+    """The newest interpreter on this Mac that Core ML conversion supports."""
+    for name in ("/opt/homebrew/bin/python3.13", "/usr/local/bin/python3.13",
+                 "/opt/homebrew/bin/python3.12", "/usr/local/bin/python3.12",
+                 "/opt/homebrew/bin/python3.11", "/usr/local/bin/python3.11",
+                 "python3.13", "python3.12", "python3.11", "python3.10"):
+        found = name if Path(name).exists() else shutil.which(name)
+        if found and Path(found).exists() and supported_python(found):
+            return found
     return sys.executable
 
 
@@ -104,8 +132,14 @@ def has_training_packages(python: str) -> bool:
         PACKAGE_CACHE[python] = False
         return False
     try:
-        result = subprocess.run([python, "-c", "import torch, coremltools"], capture_output=True,
-                                timeout=120)
+        # Import is not enough: coremltools can import on a Python it has no native extension for and then
+        # fail at the first conversion ("BlobWriter not loaded"). The smoke test converts a tiny model.
+        result = subprocess.run([python, "-c",
+                                 "import torch, coremltools as ct;"
+                                 "m = torch.jit.trace(torch.nn.Conv1d(4, 2, 1), torch.zeros(1, 4));"
+                                 "ct.convert(m, inputs=[ct.TensorType(name='x', shape=(1, 4))],"
+                                 " outputs=[ct.TensorType(name='y')], convert_to='mlprogram')"],
+                                capture_output=True, timeout=240)
         ok = result.returncode == 0
     except Exception:  # noqa: BLE001
         ok = False
@@ -224,9 +258,16 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
     if task == "setup_python":
         venv = ROOT / "AI" / ".venv"
         return [("Creating the training environment",
-                 [sys.executable, "-m", "venv", str(venv)]),
+                 [compatible_interpreter(), "-m", "venv", "--clear", str(venv)]),
                 ("Installing torch and coremltools",
                  [str(venv / "bin" / "pip"), "install", "--upgrade", "torch", "coremltools"])]
+    if task == "convert_candidate":
+        # The weights are already in training.bin.pt; this only re-runs the Core ML conversion, which is
+        # the step a Python 3.14 environment cannot do.
+        return [("Converting the saved weights", [python,
+                                                  str(ROOT / "AI" / "train_candidate_net.py"),
+                                                  str(dataset), str(model), "--convert-only"]),
+                ("Compiling the model", compile_model)]
     raise SystemExit(f"unknown task {task}")
 
 
@@ -332,9 +373,13 @@ class Handler(BaseHTTPRequestHandler):
             code = (
                 "import sys;"
                 "print('python', sys.version.split()[0]);"
-                "import torch, coremltools;"
-                "print('torch', torch.__version__, 'coremltools', coremltools.__version__);"
-                "print('mps', torch.backends.mps.is_available())"
+                "import torch, coremltools as ct;"
+                "print('torch', torch.__version__, 'coremltools', ct.__version__);"
+                "print('mps', torch.backends.mps.is_available());"
+                "m = torch.jit.trace(torch.nn.Conv1d(4, 2, 1), torch.zeros(1, 4));"
+                "ct.convert(m, inputs=[ct.TensorType(name='x', shape=(1, 4))],"
+                " outputs=[ct.TensorType(name='y')], convert_to='mlprogram');"
+                "print('coreml conversion ok')"
             )
             try:
                 result = subprocess.run([python, "-c", code], capture_output=True, text=True,
@@ -475,6 +520,7 @@ PAGE = r"""<!doctype html>
       <option value="train_shot">Train shot model</option>
       <option value="train_decider">Train all-decisions model</option>
       <option value="play_candidate">Test frame with the candidate model</option>
+      <option value="convert_candidate">Convert the saved weights (no training)</option>
       <option value="setup_python">Set up the training Python (venv + install)</option>
     </select>
     <label for="session">Session name</label>

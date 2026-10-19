@@ -64,8 +64,22 @@ def main():
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--no-coreml", action="store_true")
+    parser.add_argument("--convert-only", action="store_true",
+                        help="skip training: load <out>.pt and write the Core ML package from it")
     arguments = parser.parse_args()
     torch.manual_seed(arguments.seed)
+
+    if arguments.convert_only:
+        # A run can train under one Python and convert under another: the weights are in <out>.pt, and
+        # Core ML conversion is the part that needs a Python coremltools actually supports.
+        state = torch.load(arguments.out + ".pt", map_location="cpu")
+        features = state["layers.0.weight"].shape[1]
+        hidden = state["layers.0.weight"].shape[0]
+        model = CandidateNet(features, hidden)
+        model.load_state_dict(state)
+        print(f"loaded {arguments.out}.pt ({features} inputs, {hidden} wide)")
+        convert(model, features, arguments.out)
+        return
 
     features, label, shot = read_dataset(arguments.dataset)
     # The aim head is a **residual**: the turn from the candidate's own line. That is what lets the network
@@ -175,9 +189,14 @@ def main():
 
     if arguments.no_coreml:
         return
+    convert(model, features.shape[1], arguments.out)
+
+
+def convert(model, feature_count, out):
+    """The torch model to an `.mlpackage`, with the output named `decision`."""
     import coremltools as ct
     model = model.cpu().eval()
-    example = torch.zeros(1, features.shape[1], dtype=torch.float32)
+    example = torch.zeros(1, feature_count, dtype=torch.float32)
     traced = torch.jit.trace(model, example)
     mlmodel = ct.convert(
         traced,
@@ -189,8 +208,8 @@ def main():
     )
     mlmodel.short_description = ("A score for this proposed shot, and the stroke to play instead: "
                                  "aim sin/cos, power, side, vertical, lift/45°")
-    mlmodel.save(arguments.out)
-    print(f"wrote {arguments.out}")
+    mlmodel.save(out)
+    print(f"wrote {out}")
 
 
 if __name__ == "__main__":
