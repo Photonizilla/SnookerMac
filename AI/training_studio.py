@@ -209,8 +209,11 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
         play += ["--decider", str(compiled)]
     if task == "full_exact":
         # Both are compiled earlier in this same run, so the paths are the ones the test frame will use.
-        play += ["--decider", str(folder / "Decider.mlmodelc"),
-                 "--candidate-policy", str(compiled)]
+        # Exact is forced: the models were taught by a teacher with no aim error, and the frame is played
+        # with the same cue action.
+        play = [engine, "--ai-play", "1", "--exact",
+                "--decider", str(folder / "Decider.mlmodelc"),
+                "--candidate-policy", str(compiled)]
 
     if task == "export_shot":
         return [("Exporting shots", export_shots)]
