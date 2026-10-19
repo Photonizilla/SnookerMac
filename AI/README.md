@@ -25,6 +25,12 @@ the chosen task — a full run is export → train → Core ML conversion → te
 **Stop** cancels it and **Open session folder** reveals the dataset, model, compiled `.mlmodelc` and weights.
 Sessions are written under `AI/Sessions/<name>/`.
 
+**Deploy to game** copies a session's compiled models into `AI/Models/` — `Model.mlmodelc` becomes
+`Candidate2.mlmodelc` (the stroke) and `Decider.mlmodelc` becomes `Decider2.mlmodelc` (the decisions). That
+is the folder the app reads, first, so the next *Exact + Deep Learned: On* game uses the new model with no
+rebuild; everything stays inside the SnookerMac project. *Full: exact network* deploys at the end of the
+run, since its output is exactly that player.
+
 The studio itself needs only the Python standard library; the training needs `torch` and `coremltools` in
 the interpreter you point it at, for example:
 

@@ -315,19 +315,19 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
 
 
 def deploy_stages(folder: Path) -> list[tuple[str, list[str]]]:
-    """Copy a session's compiled models where the app looks for them.
+    """Copy a session's compiled models into the project's `AI/Models`, where the app reads them.
 
-    `~/Library/Application Support/Snooker/Models` is checked before the app bundle, so the Exact + Deep
-    Learned player picks a newly trained model up at the next new game — no rebuild, no Xcode.
+    Everything stays inside the SnookerMac folder; the Exact + Deep Learned player picks a newly deployed
+    model up at the next new game, with no rebuild.
     """
-    support = Path.home() / "Library" / "Application Support" / "Snooker" / "Models"
-    stages = [("Creating the models folder", ["/bin/mkdir", "-p", str(support)])]
+    models = ROOT / "AI" / "Models"
+    stages = [("Creating the models folder", ["/bin/mkdir", "-p", str(models)])]
     for source, name in (("Model.mlmodelc", "Candidate2.mlmodelc"),
                          ("Decider.mlmodelc", "Decider2.mlmodelc")):
         if (folder / source).exists():
-            stages.append((f"Deploying {name}", ["/bin/rm", "-rf", str(support / name)]))
+            stages.append((f"Deploying {name}", ["/bin/rm", "-rf", str(models / name)]))
             stages.append((f"Deploying {name}", ["/bin/cp", "-R", str(folder / source),
-                                                 str(support / name)]))
+                                                 str(models / name)]))
     return stages
 
 
