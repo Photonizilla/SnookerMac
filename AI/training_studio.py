@@ -55,6 +55,7 @@ class Job:
 
 JOB = Job()
 LOCK = threading.Lock()
+CURRENT: dict = {"task": "", "config": {}}
 
 
 def say(text: str) -> None:
@@ -184,15 +185,19 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
     teacher = teacher_flags(config)
     training = training_flags(config)
 
+    def with_init(command: list[str], kind: str) -> list[str]:
+        path = init_weights(config, kind)
+        return command + (["--init", str(path)] if path else [])
+
     export_candidates = [engine, "--ai-export-candidates", str(dataset)] + teacher
     export_shots = [engine, "--ai-export-policy", str(dataset)] + teacher
     export_all = [engine, "--ai-export-all", str(dataset)] + teacher
-    train_candidate = [python, str(ROOT / "AI" / "train_candidate_net.py"), str(dataset),
-                       str(model)] + training
-    train_shot = [python, str(ROOT / "AI" / "train_policy_net.py"), str(dataset),
-                  str(model)] + training
-    train_decider = [python, str(ROOT / "AI" / "train_decider_net.py"), str(dataset),
-                     str(model)] + training
+    train_candidate = with_init([python, str(ROOT / "AI" / "train_candidate_net.py"), str(dataset),
+                                 str(model)] + training, "candidate")
+    train_shot = with_init([python, str(ROOT / "AI" / "train_policy_net.py"), str(dataset),
+                            str(model)] + training, "shot")
+    train_decider = with_init([python, str(ROOT / "AI" / "train_decider_net.py"), str(dataset),
+                               str(model)] + training, "decider")
     compile_model = ["xcrun", "coremlcompiler", "compile", str(model), str(folder)]
     play = [engine, "--ai-play", "1"]
     if config.get("teacher") == "exact":
@@ -245,8 +250,8 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
         # on the clean Exact teacher.
         decider_dataset = folder / "decisions.bin"
         decider_model = folder / "Decider.mlpackage"
-        decider_train = [python, str(ROOT / "AI" / "train_decider_net.py"),
-                         str(decider_dataset), str(decider_model)] + training
+        decider_train = with_init([python, str(ROOT / "AI" / "train_decider_net.py"),
+                                   str(decider_dataset), str(decider_model)] + training, "decider")
         decider_compile = ["xcrun", "coremlcompiler", "compile", str(decider_model), str(folder)]
         clean_teacher = ["--exact", "--frames", str(int(config.get("frames", 12))),
                          "--reds", str(int(config.get("reds", 10))),
@@ -262,9 +267,9 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                 ("Compiling the stroke model", compile_model),
                 ("Compiling the decisions model", decider_compile),
                 ("A test frame", play)]
-        # A successful Exact run is the player the ESC menu switches on, so it is deployed too: the app
-        # reads the deployed folder at the next new game, with no rebuild.
-        return stages + deploy_stages(folder)
+        # A successful run is saved as a version; which one the game plays is the player's choice, made in
+        # the Versions panel.
+        return stages
     if task == "deploy":
         stages = deploy_stages(folder)
         if len(stages) == 1:
@@ -311,6 +316,8 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                 ("Training on the frames it won", fine_tune),
                 ("Compiling the new model", compile_decider),
                 ("A match: old against new", match)]
+    if task == "save_version":
+        return []
     raise SystemExit(f"unknown task {task}")
 
 
@@ -329,6 +336,108 @@ def deploy_stages(folder: Path) -> list[tuple[str, list[str]]]:
             stages.append((f"Deploying {name}", ["/bin/cp", "-R", str(folder / source),
                                                  str(models / name)]))
     return stages
+
+
+# MARK: - Versions
+
+VERSIONS = ROOT / "AI" / "Models" / "Versions"
+DEPLOYED_FILE = ROOT / "AI" / "Models" / "deployed.json"
+
+
+def read_deployed() -> dict:
+    try:
+        return json.loads(DEPLOYED_FILE.read_text())
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def list_versions() -> list[dict]:
+    found = []
+    if VERSIONS.is_dir():
+        for folder in sorted(VERSIONS.iterdir()):
+            meta = folder / "version.json"
+            if not meta.is_file():
+                continue
+            try:
+                data = json.loads(meta.read_text())
+            except Exception:  # noqa: BLE001
+                continue
+            data["id"] = folder.name
+            data["hasCandidate"] = (folder / "Model.mlmodelc").is_dir()
+            data["hasDecider"] = (folder / "Decider.mlmodelc").is_dir()
+            found.append(data)
+    return found
+
+
+def next_version_id(label: str) -> str:
+    VERSIONS.mkdir(parents=True, exist_ok=True)
+    numbers = [int(p.name[1:4]) for p in VERSIONS.iterdir()
+               if p.name.startswith("v") and p.name[1:4].isdigit()]
+    return f"v{max(numbers, default=0) + 1:03d}-{safe_name(label)}"
+
+
+def save_version(folder: Path, label: str, parent: str, config: dict) -> dict | None:
+    """Copy a session's models into a numbered version, with where it came from and how it was made."""
+    if not folder.is_dir():
+        return None
+    target = VERSIONS / next_version_id(label)
+    target.mkdir(parents=True, exist_ok=True)
+    copied = []
+    for name in ("Model.mlmodelc", "Model.mlpackage", "Model.mlpackage.pt",
+                 "Decider.mlmodelc", "Decider.mlpackage", "Decider.mlpackage.pt"):
+        source = folder / name
+        if source.is_dir():
+            shutil.copytree(source, target / name)
+            copied.append(name)
+        elif source.is_file():
+            shutil.copy2(source, target / name)
+            copied.append(name)
+    if not copied:
+        shutil.rmtree(target, ignore_errors=True)
+        return None
+    meta = {"session": label, "parent": parent or "scratch",
+            "created": time.strftime("%Y-%m-%d %H:%M"), "task": config.get("task", ""),
+            "teacher": config.get("teacher", ""), "frames": config.get("frames"),
+            "epochs": config.get("epochs"), "hidden": config.get("hidden"),
+            "seed": config.get("seed"), "models": sorted(copied)}
+    (target / "version.json").write_text(json.dumps(meta, indent=2))
+    return {"id": target.name, **meta}
+
+
+def deploy_version(version_id: str) -> bool:
+    folder = VERSIONS / version_id
+    if not folder.is_dir():
+        return False
+    try:
+        meta = json.loads((folder / "version.json").read_text())
+    except Exception:  # noqa: BLE001
+        meta = {}
+    # The game's Exact network wants a **candidate-conditioned** stroke and an all-decisions model. A
+    # shot-policy model answers a different question (six numbers from the position) and must not be
+    # dropped into that slot.
+    if "shot" in str(meta.get("task", "")):
+        return False
+    deployed = read_deployed()
+    for source, name, key in (("Model.mlmodelc", "Candidate2.mlmodelc", "candidate"),
+                              ("Decider.mlmodelc", "Decider2.mlmodelc", "decider")):
+        if (folder / source).is_dir():
+            destination = ROOT / "AI" / "Models" / name
+            shutil.rmtree(destination, ignore_errors=True)
+            shutil.copytree(folder / source, destination)
+            deployed[key] = version_id
+    deployed["at"] = time.strftime("%Y-%m-%d %H:%M")
+    DEPLOYED_FILE.write_text(json.dumps(deployed, indent=2))
+    return True
+
+
+def init_weights(config: dict, kind: str) -> Path | None:
+    """The torch weights a run starts from: a version's, when one was chosen."""
+    version = (config.get("initVersion") or "").strip()
+    if not version:
+        return None
+    name = "Decider.mlpackage.pt" if kind == "decider" else "Model.mlpackage.pt"
+    path = VERSIONS / version / name
+    return path if path.is_file() else None
 
 
 def run_stages(stages: list[tuple[str, list[str]]]) -> None:
@@ -361,6 +470,14 @@ def run_stages(stages: list[tuple[str, list[str]]]) -> None:
                 return
         with LOCK:
             JOB.returncode = 0
+        if CURRENT["task"].startswith("full_") or CURRENT["task"] == "save_version":
+            if JOB.session:
+                meta = save_version(JOB.session, CURRENT["config"].get("session", "session"),
+                                    CURRENT["config"].get("initVersion", ""), CURRENT["config"])
+                if meta:
+                    say(f"\nVersion {meta['id']} saved — deploy it from the Versions panel.")
+                else:
+                    say("\nNo compiled models in this session: nothing saved as a version.")
         say("\n*** Done ***")
     except Exception as error:  # noqa: BLE001 - the studio has to survive anything it started
         say(f"\n*** {error} ***")
@@ -418,6 +535,10 @@ class Handler(BaseHTTPRequestHandler):
             }).encode()
             self.reply(200, body)
             return
+        if parsed.path == "/api/versions":
+            self.reply(200, json.dumps({"versions": list_versions(),
+                                        "deployed": read_deployed()}).encode())
+            return
         self.reply(404, b"{}")
 
     def do_POST(self) -> None:  # noqa: N802
@@ -464,6 +585,10 @@ class Handler(BaseHTTPRequestHandler):
             subprocess.Popen(["open", str(folder)])
             self.reply(200, b'{"opened":true}')
             return
+        if parsed.path == "/api/deploy":
+            ok = deploy_version(str(payload.get("id", "")))
+            self.reply(200, json.dumps({"ok": ok, "deployed": read_deployed()}).encode())
+            return
         if parsed.path == "/api/run":
             task = payload.get("task", "full_candidate")
             if task in TRAINING_TASKS and not has_training_packages(python_path(payload)):
@@ -486,6 +611,8 @@ class Handler(BaseHTTPRequestHandler):
                 JOB.started = time.time()
                 JOB.stage = "Starting"
                 JOB.session = session_dir(payload)
+            CURRENT["task"] = task
+            CURRENT["config"] = dict(payload)
             JOB.session.mkdir(parents=True, exist_ok=True)
             try:
                 stages = stages_for(task, payload)
@@ -548,6 +675,10 @@ PAGE = r"""<!doctype html>
         color:#cfd8e3; white-space:pre-wrap; }
   .hint { color:var(--muted); font-size:12px; margin-top:8px; }
   .artifacts { margin-top:10px; color:var(--muted); font-size:12px; word-break:break-word; }
+  .versionsbar { border-bottom:1px solid var(--line); padding-bottom:10px; margin-bottom:12px; }
+  .versionlist { max-height:132px; overflow:auto; font-size:12px; margin-bottom:6px; }
+  .versionlist label { display:block; margin:3px 0; color:var(--ink); font-size:12px; }
+  .versionlist .live { color:var(--good); }
   .badge { display:inline-block; padding:1px 7px; border-radius:99px; border:1px solid var(--line);
            color:var(--muted); font-size:11px; margin-right:6px; }
   @media (max-width: 1000px) { main { grid-template-columns:1fr; } pre { height:380px; } }
@@ -583,10 +714,13 @@ PAGE = r"""<!doctype html>
       <option value="convert_candidate">Convert the saved weights (no training)</option>
       <option value="selfplay_wins">Self-play: network vs itself, win-weighted (continue this session)</option>
       <option value="deploy">Deploy the session's models to the game</option>
+      <option value="save_version">Save this session as a version</option>
       <option value="setup_python">Set up the training Python (venv + install)</option>
     </select>
     <label for="session">Session name</label>
     <input id="session" value="session-01">
+    <label for="initVersion">Start from</label>
+    <select id="initVersion"><option value="">Scratch — a new network</option></select>
     <label for="teacher">Teacher</label>
     <select id="teacher">
       <option value="hard">Hard (σ 0.03°)</option>
@@ -627,6 +761,14 @@ PAGE = r"""<!doctype html>
     training. The teacher can generate as much data as the clock allows.</p>
   </section>
   <section class="panel logwrap">
+    <div class="versionsbar">
+      <h2>Versions</h2>
+      <div id="versionList" class="versionlist">none yet</div>
+      <div class="actions">
+        <button class="small" id="saveVersion">Save this session as a version</button>
+        <button class="small" id="deployVersion">Deploy the chosen version</button>
+      </div>
+    </div>
     <div class="status">
       <span><span id="dot" class="dot"></span> <span id="state">idle</span></span>
       <span id="stage"></span>
@@ -639,8 +781,8 @@ PAGE = r"""<!doctype html>
 <script>
 const $ = (id) => document.getElementById(id);
 let since = 0, timer = null, startedAt = 0;
-const fields = ["task","session","teacher","frames","reds","epochs","hidden","batch","lr","seed",
-                "aimSweep","lineTuning","python","engine"];
+const fields = ["task","session","initVersion","teacher","frames","reds","epochs","hidden","batch",
+                "lr","seed","aimSweep","lineTuning","python","engine"];
 function config() {
   const c = {};
   for (const f of fields) c[f] = $(f).type === "checkbox" ? $(f).checked : $(f).value;
@@ -649,9 +791,34 @@ function config() {
   return c;
 }
 let root = "";
+async function refreshVersions() {
+  const d = await (await fetch("/api/versions")).json();
+  const box = $("versionList");
+  const select = $("initVersion");
+  const chosen = select.value;
+  box.innerHTML = "";
+  select.innerHTML = '<option value="">Scratch — a new network</option>';
+  if (!d.versions.length) {
+    box.textContent = "none yet — save a session as a version, or run a full training";
+    return;
+  }
+  for (const v of d.versions) {
+    const row = document.createElement("label");
+    const live = (d.deployed.candidate === v.id || d.deployed.decider === v.id) ? "⚡ " : "";
+    row.innerHTML = `<input type="radio" name="version" value="${v.id}" style="width:auto"> ` +
+      `${live}${v.id} · ${v.created} · from ${v.parent}`;
+    box.appendChild(row);
+    const option = document.createElement("option");
+    option.value = v.id;
+    option.textContent = `${v.id} (from ${v.parent})`;
+    select.appendChild(option);
+  }
+  select.value = chosen;
+}
 async function defaults() {
   const d = await (await fetch("/api/config")).json();
   root = d.root; $("python").value = d.python; $("engine").value = d.engine;
+  refreshVersions();
 }
 const presets = {
   shot:      { task:"full_shot", teacher:"hard", session:"shot-01", frames:12 },
@@ -677,7 +844,7 @@ async function poll() {
   $("stage").textContent = r.stage || "";
   $("artifacts").textContent = r.artifacts && r.artifacts.length ? "Session files: " + r.artifacts.join("  ·  ") : "";
   if (r.started) { const s = Math.max(0, Date.now()/1000 - r.started); $("clock").textContent = s.toFixed(0) + " s"; }
-  if (!r.running) { clearInterval(timer); timer = null; }
+  if (!r.running) { clearInterval(timer); timer = null; refreshVersions(); }
 }
 async function start(taskOverride) {
   if (taskOverride) $("task").value = taskOverride;
@@ -702,6 +869,17 @@ $("stop").onclick = () => fetch("/api/stop", { method:"POST", headers:{"Content-
 $("reveal").onclick = () => fetch("/api/reveal", { method:"POST", headers:{"Content-Type":"application/json"},
                                                    body: JSON.stringify(config()) });
 $("deploy").onclick = () => start("deploy");
+$("saveVersion").onclick = () => start("save_version");
+$("deployVersion").onclick = async () => {
+  const chosen = document.querySelector('input[name="version"]:checked');
+  if (!chosen) { $("log").textContent = "Choose a version in the list first."; return; }
+  const r = await (await fetch("/api/deploy", { method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify({id: chosen.value}) })).json();
+  $("log").textContent = r.ok
+    ? `Deployed ${chosen.value}. Start a new Exact + Deep Learned game.`
+    : "That version could not be deployed.";
+  refreshVersions();
+};
 $("check").onclick = async () => {
   $("log").textContent = "Checking the training environment…\n";
   const r = await (await fetch("/api/check", { method:"POST", headers:{"Content-Type":"application/json"},

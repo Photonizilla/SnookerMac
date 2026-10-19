@@ -28,8 +28,27 @@ Sessions are written under `AI/Sessions/<name>/`.
 **Deploy to game** copies a session's compiled models into `AI/Models/` — `Model.mlmodelc` becomes
 `Candidate2.mlmodelc` (the stroke) and `Decider.mlmodelc` becomes `Decider2.mlmodelc` (the decisions). That
 is the folder the app reads, first, so the next *Exact + Deep Learned: On* game uses the new model with no
-rebuild; everything stays inside the SnookerMac project. *Full: exact network* deploys at the end of the
-run, since its output is exactly that player.
+rebuild; everything stays inside the SnookerMac project.
+
+### Versions
+
+Every full training run is saved as a numbered **version** under `AI/Models/Versions/` when it finishes —
+for example `v003-exact-04` — with a `version.json` holding the session, the **parent** it started from
+(`scratch` or an earlier version), the date and the run's settings, and the compiled `.mlmodelc` plus the
+`.pt` weights. A session that already has models can be saved by hand with **Save this session as a
+version**.
+
+**Start from** in the Session panel chooses what a run begins with: *Scratch — a new network*, or a
+version. The trainers load that version's `.pt` (the architecture's width is read from the checkpoint), so
+a new version can either start fresh or continue an existing model. Each new version records which one it
+came from.
+
+The **Versions** panel lists them; choose one and press **Deploy the chosen version**. That copies its
+compiled models into `AI/Models/Candidate2.mlmodelc` and `AI/Models/Decider2.mlmodelc` — the files the app
+reads — and records the choice in `AI/Models/deployed.json`. The live version is marked ⚡ in the list. A
+version with both models replaces both; one with only a candidate (or only decisions) replaces only that
+part. Shot-policy versions are not deployable to the game: the Exact network needs the candidate-conditioned
+stroke and the all-decisions model.
 
 The studio itself needs only the Python standard library; the training needs `torch` and `coremltools` in
 the interpreter you point it at, for example:

@@ -126,9 +126,11 @@ def main():
     w_train = torch.tensor(sample_weight[train], dtype=torch.float32)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"training on {device}")
-    model = DeciderNet(inputs.shape[1], arguments.hidden).to(device)
-    if arguments.init:
-        model.load_state_dict(torch.load(arguments.init, map_location=device))
+    state = torch.load(arguments.init, map_location="cpu") if arguments.init else None
+    model = DeciderNet(inputs.shape[1],
+                       state["layers.0.weight"].shape[0] if state else arguments.hidden).to(device)
+    if state:
+        model.load_state_dict(state)
         print(f"starting from {arguments.init}")
     print(f"{sum(p.numel() for p in model.parameters())} weights")
     optimiser = torch.optim.Adam(model.parameters(), lr=arguments.lr,

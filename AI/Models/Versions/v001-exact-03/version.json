@@ -1,0 +1,19 @@
+{
+  "session": "exact-03",
+  "parent": "scratch",
+  "created": "2026-10-19 22:14",
+  "task": "save_version",
+  "teacher": "",
+  "frames": null,
+  "epochs": null,
+  "hidden": null,
+  "seed": null,
+  "models": [
+    "Decider.mlmodelc",
+    "Decider.mlpackage",
+    "Decider.mlpackage.pt",
+    "Model.mlmodelc",
+    "Model.mlpackage",
+    "Model.mlpackage.pt"
+  ]
+}

@@ -66,6 +66,7 @@ def main():
     parser.add_argument("--no-coreml", action="store_true")
     parser.add_argument("--convert-only", action="store_true",
                         help="skip training: load <out>.pt and write the Core ML package from it")
+    parser.add_argument("--init", help="torch weights to start from (an earlier version)")
     arguments = parser.parse_args()
     torch.manual_seed(arguments.seed)
 
@@ -110,7 +111,15 @@ def main():
     s_val = torch.tensor(shot[val], dtype=torch.float32)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"training on {device}")
-    model = CandidateNet(features.shape[1], arguments.hidden).to(device)
+    hidden = arguments.hidden
+    if arguments.init:
+        # The checkpoint's width is the model's shape; the flag is only for a fresh network.
+        state = torch.load(arguments.init, map_location="cpu")
+        hidden = state["layers.0.weight"].shape[0]
+    model = CandidateNet(features.shape[1], hidden).to(device)
+    if arguments.init:
+        model.load_state_dict(torch.load(arguments.init, map_location=device))
+        print(f"starting from {arguments.init} ({hidden} wide)")
     print(f"{sum(p.numel() for p in model.parameters())} weights")
     optimiser = torch.optim.Adam(model.parameters(), lr=arguments.lr,
                                  weight_decay=arguments.weight_decay)
