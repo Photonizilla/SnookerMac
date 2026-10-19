@@ -36,6 +36,13 @@ AI/.venv/bin/pip install torch coremltools
 then put `AI/.venv/bin/python` in the *Python for training* field. The engine defaults to
 `build/Snooker.app/Contents/MacOS/Snooker`; rebuild the app with `./Scripts/build-app.sh Release` first.
 
+**If a run stops with `ModuleNotFoundError: No module named 'torch'`**, nothing is wrong with the dataset —
+the *Python for training* field is on an interpreter that does not have the packages. The studio now starts
+with the first training Python it can find (`AI/.venv`, a known venv, then the system Python), **refuses to
+start a training run** with one that has no torch and says so in the log, and has a **Set up Python** button
+that creates `AI/.venv` and installs `torch` and `coremltools`. The generated data is kept: pick **Train
+candidate model** with the same session name and the export is reused rather than regenerated.
+
 The computer player in `Sources/SnookerCore` plays by searching the real physics: it proposes shots, plays
 each of them out in full, and judges the position it is left with. That judgement —
 `ComputerPlayer.value(of:result:)` — is one small function of hand-written arithmetic, and it is the one

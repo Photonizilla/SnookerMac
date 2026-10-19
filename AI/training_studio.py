@@ -32,6 +32,9 @@ from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 8765
+TRAINING_TASKS = {"train_shot", "train_candidate", "train_decider",
+                  "full_shot", "full_candidate", "full_decider", "full_exact"}
+PACKAGE_CACHE: dict[str, bool] = {}
 
 
 @dataclass
@@ -74,6 +77,40 @@ def engine_path(config: dict) -> Path:
 def python_path(config: dict) -> str:
     given = (config.get("python") or "").strip()
     return given or sys.executable
+
+
+def find_training_python() -> str:
+    """The first Python that looks like a training environment.
+
+    Looking is cheap and does not import torch: the studio's own start must not wait for it. The
+    *Check environment* and *Run* buttons do the real import and tell the truth.
+    """
+    override = os.environ.get("SNOOKER_PYTHON", "").strip()
+    candidates = [override,
+                  str(ROOT / "AI" / ".venv" / "bin" / "python"),
+                  "/private/tmp/snooker-ai/venv/bin/python",
+                  shutil.which("python3") or "",
+                  sys.executable]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return sys.executable
+
+
+def has_training_packages(python: str) -> bool:
+    if python in PACKAGE_CACHE:
+        return PACKAGE_CACHE[python]
+    if not Path(python).exists():
+        PACKAGE_CACHE[python] = False
+        return False
+    try:
+        result = subprocess.run([python, "-c", "import torch, coremltools"], capture_output=True,
+                                timeout=120)
+        ok = result.returncode == 0
+    except Exception:  # noqa: BLE001
+        ok = False
+    PACKAGE_CACHE[python] = ok
+    return ok
 
 
 def session_dir(config: dict) -> Path:
@@ -184,6 +221,12 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                 ("Compiling the stroke model", compile_model),
                 ("Compiling the decisions model", decider_compile),
                 ("A test frame", play)]
+    if task == "setup_python":
+        venv = ROOT / "AI" / ".venv"
+        return [("Creating the training environment",
+                 [sys.executable, "-m", "venv", str(venv)]),
+                ("Installing torch and coremltools",
+                 [str(venv / "bin" / "pip"), "install", "--upgrade", "torch", "coremltools"])]
     raise SystemExit(f"unknown task {task}")
 
 
@@ -266,11 +309,10 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, body)
             return
         if parsed.path == "/api/config":
-            suggested = shutil.which("python3") or sys.executable
             body = json.dumps({
                 "root": str(ROOT),
                 "engine": str(engine_path({})),
-                "python": suggested,
+                "python": find_training_python(),
                 "sessions": str(ROOT / "AI" / "Sessions"),
             }).encode()
             self.reply(200, body)
@@ -318,6 +360,15 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(200, b'{"opened":true}')
             return
         if parsed.path == "/api/run":
+            task = payload.get("task", "full_candidate")
+            if task in TRAINING_TASKS and not has_training_packages(python_path(payload)):
+                self.reply(200, json.dumps({
+                    "started": False,
+                    "error": (f"{python_path(payload)} has no torch/coremltools. "
+                              "Put a Python that has them in “Python for training” (Check environment), "
+                              "or press “Set up Python” to create AI/.venv."),
+                }).encode())
+                return
             with LOCK:
                 if JOB.running:
                     self.reply(409, b'{"error":"a run is already going"}')
@@ -332,7 +383,7 @@ class Handler(BaseHTTPRequestHandler):
                 JOB.session = session_dir(payload)
             JOB.session.mkdir(parents=True, exist_ok=True)
             try:
-                stages = stages_for(payload.get("task", "full_candidate"), payload)
+                stages = stages_for(task, payload)
             except SystemExit as error:
                 with LOCK:
                     JOB.running = False
@@ -424,6 +475,7 @@ PAGE = r"""<!doctype html>
       <option value="train_shot">Train shot model</option>
       <option value="train_decider">Train all-decisions model</option>
       <option value="play_candidate">Test frame with the candidate model</option>
+      <option value="setup_python">Set up the training Python (venv + install)</option>
     </select>
     <label for="session">Session name</label>
     <input id="session" value="session-01">
@@ -455,6 +507,7 @@ PAGE = r"""<!doctype html>
     <input id="engine">
     <div class="actions">
       <button class="small" id="check">Check environment</button>
+      <button class="small" id="setup">Set up Python</button>
       <button class="small" id="reveal">Open session folder</button>
     </div>
     <div class="actions">
@@ -486,9 +539,10 @@ function config() {
   c.batch = +c.batch; c.lr = +c.lr; c.seed = +c.seed;
   return c;
 }
+let root = "";
 async function defaults() {
   const d = await (await fetch("/api/config")).json();
-  $("python").value = d.python; $("engine").value = d.engine;
+  root = d.root; $("python").value = d.python; $("engine").value = d.engine;
 }
 const presets = {
   shot:      { task:"full_shot", teacher:"hard", session:"shot-01", frames:12 },
@@ -516,13 +570,24 @@ async function poll() {
   if (r.started) { const s = Math.max(0, Date.now()/1000 - r.started); $("clock").textContent = s.toFixed(0) + " s"; }
   if (!r.running) { clearInterval(timer); timer = null; }
 }
-$("run").onclick = async () => {
+async function start(taskOverride) {
+  if (taskOverride) $("task").value = taskOverride;
   $("log").textContent = ""; since = 0;
   const res = await fetch("/api/run", { method:"POST", headers:{"Content-Type":"application/json"},
                                         body: JSON.stringify(config()) });
+  const body = await res.json().catch(() => ({}));
   if (!res.ok) { $("log").textContent = "A run is already going."; return; }
+  if (body.started === false) {
+    $("log").textContent = body.error || "The run did not start.";
+    return;
+  }
   if (!timer) timer = setInterval(poll, 700);
   poll();
+}
+$("run").onclick = () => start();
+$("setup").onclick = () => {
+  if (root) $("python").value = root + "/AI/.venv/bin/python";
+  start("setup_python");
 };
 $("stop").onclick = () => fetch("/api/stop", { method:"POST", headers:{"Content-Type":"application/json"}, body:"{}" });
 $("reveal").onclick = () => fetch("/api/reveal", { method:"POST", headers:{"Content-Type":"application/json"},
