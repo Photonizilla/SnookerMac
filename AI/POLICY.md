@@ -172,6 +172,34 @@ The two models compose: `--decider` makes every administrative decision, and `--
 the stroke whenever that decision is "shoot". That is the pure player with the better shot representation,
 and neither the action nor the stroke comes from the search.
 
+## Population evolution
+
+`AI/evolve_decider.py` is a genetic algorithm over the neural player. A genome is the complete `Decider`
+weights plus, when the base version has them, the candidate-conditioned stroke weights. It keeps a
+population, measures every individual by playing frames, keeps the elite, and breeds the rest with
+neuron-wise crossover and per-tensor Gaussian mutation. Both halves are mutated and crossed together, so
+the search covers the decisions (shot, colour, placement, free ball, the answers after a foul) and the
+stroke that executes them. A base with no stroke runs decider-only and plays through the decider's own
+six-number shot head.
+
+The studio exposes two modes:
+
+* **win-selected** — each individual plays the current champion and distinct peers on the same seeds;
+  fitness is frames won minus lost, then wins, fewer unfinished frames, points difference.
+* **break-selected** — each individual plays self-play frames on the same seeds; fitness is the highest
+  break, then the second-highest, then finished frames, then total points.
+
+The engine writes a JSON report per measurement (`--report`), so the loop never parses a log. A match with
+a report returns success even when the individual loses. A frame that hits the 900-decision cap is
+recorded as unfinished and still contributes its points; the rankings show it rather than hiding it as a
+draw. The champion is copied into the session after every generation (Stop keeps the best so far), and a
+completed run is saved as a version with the champion's generation, fitness and evolution settings.
+
+The parameters and the cost of a run — population × generations × frames, hours rather than minutes — are
+in [README.md](README.md#population-evolution-genetic-algorithm). The short version is that this is a local,
+noisy search around a pretrained model: it is not a substitute for more supervised data, and the current
+deployed network's one-point breaks make early generations statistically thin.
+
 ## The Neural Engine
 
 `--ai-model-plan` reports, for every operation, where Core ML **prefers** it and where it **can** run. On

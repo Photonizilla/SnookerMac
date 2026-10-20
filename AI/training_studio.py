@@ -34,7 +34,8 @@ ROOT = Path(__file__).resolve().parent.parent
 PORT = 8765
 TRAINING_TASKS = {"train_shot", "train_candidate", "train_decider",
                   "full_shot", "full_candidate", "full_decider", "full_exact",
-                  "convert_candidate"}
+                  "convert_candidate", "evolve_win", "evolve_break"}
+EVOLUTION_TASKS = {"evolve_win", "evolve_break"}
 PACKAGE_CACHE: dict[str, bool] = {}
 
 
@@ -313,7 +314,8 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
         stroke = stroke_training_stages(folder, folder / "selfplay-candidates.bin",
                                         "--win-weighted", python, training)
         match = [engine, "--ai-match", str(folder / "Decider-old.mlmodelc"), str(decider),
-                 "--frames", str(max(2, int(config.get("frames", 8)) // 2))]
+                 "--frames", str(max(2, int(config.get("frames", 8)) // 2)),
+                 "--report", str(folder / "old-vs-new.json")]
         if candidate.exists():
             match += ["--candidate-policy", str(candidate)]
         return bootstrap + [("The network plays itself", play_self),
@@ -343,7 +345,8 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
         stroke = stroke_training_stages(folder, folder / "breaks-candidates.bin",
                                         "--break-weighted", python, training)
         match = [engine, "--ai-match", str(folder / "Decider-old.mlmodelc"), str(decider),
-                 "--frames", str(max(2, int(config.get("frames", 8)) // 2))]
+                 "--frames", str(max(2, int(config.get("frames", 8)) // 2)),
+                 "--report", str(folder / "old-vs-new.json")]
         if candidate.exists():
             match += ["--candidate-policy", str(candidate)]
         return bootstrap + [("The network plays itself", play_self),
@@ -352,6 +355,8 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                 ("Training on the frames with the highest breaks", fine_tune),
                 ("Compiling the new model", compile_decider),
                 ("A match: old against new", match)]
+    if task in EVOLUTION_TASKS:
+        return evolution_stages(task, config)
     if task == "save_version":
         return []
     raise SystemExit(f"unknown task {task}")
@@ -371,6 +376,167 @@ def deploy_stages(folder: Path) -> list[tuple[str, list[str]]]:
             stages.append((f"Deploying {name}", ["/bin/rm", "-rf", str(models / name)]))
             stages.append((f"Deploying {name}", ["/bin/cp", "-R", str(folder / source),
                                                  str(models / name)]))
+    return stages
+
+
+# MARK: - Evolution
+
+def evolution_base(folder: Path, config: dict) -> tuple[list[tuple[str, list[str]]], Path, Path | None,
+                                                         Path | None, str]:
+    """The weights and stroke an evolution run starts from.
+
+    A chosen version is the cleanest base: its decision weights and its candidate stroke were trained
+    together. With no version chosen, the session's own decision model is used; a session that only trained
+    a stroke borrows the deployed decision model, exactly as the self-play rounds do.
+    """
+    version_id = (config.get("initVersion") or "").strip()
+    if version_id:
+        version = VERSIONS / version_id
+        weights = version / "Decider.mlpackage.pt"
+        compiled = version / "Decider.mlmodelc"
+        if not weights.is_file() or not compiled.is_dir():
+            raise SystemExit(f"{version_id} has no Decider.mlpackage.pt and Decider.mlmodelc to evolve")
+        # Keep the stroke the decider is measured with in the session too, so the version saved at the end
+        # is self-contained and deployment replaces both halves of the player. The evolution itself takes
+        # the stroke weights from the chosen version and mutates them with the decider.
+        stages = [("Creating the session folder", ["/bin/mkdir", "-p", str(folder)])]
+        stroke = version / "Model.mlmodelc"
+        stroke_weights = version / "Model.mlpackage.pt"
+        if stroke.is_dir():
+            stages += [
+                ("Copying the version's stroke into the session",
+                 ["/bin/rm", "-rf", str(folder / "Model.mlmodelc")]),
+                ("Copying the version's stroke into the session",
+                 ["/bin/rm", "-rf", str(folder / "Model.mlpackage")]),
+                ("Copying the version's stroke into the session",
+                 ["/bin/cp", "-R", str(stroke), str(folder / "Model.mlmodelc")]),
+            ]
+            if (version / "Model.mlpackage.pt").is_file():
+                stages.append(("Copying the version's stroke into the session",
+                               ["/bin/cp", str(version / "Model.mlpackage.pt"),
+                                str(folder / "Model.mlpackage.pt")]))
+            if stroke_weights.is_file():
+                return stages, weights, stroke_weights, folder / "Model.mlmodelc", version_id
+            return stages, weights, None, None, version_id
+        return stages, weights, None, None, version_id
+
+    weights = folder / "Decider.mlpackage.pt"
+    compiled = folder / "Decider.mlmodelc"
+    stages: list[tuple[str, list[str]]] = []
+    if not (weights.is_file() and compiled.is_dir()):
+        deployed = read_deployed().get("decider", "")
+        version = VERSIONS / deployed if deployed else None
+        if not version or not (version / "Decider.mlpackage.pt").is_file() \
+                or not (version / "Decider.mlmodelc").is_dir():
+            raise SystemExit(
+                f"{folder.name} has no decision model to evolve. Choose a version under “Start from”, "
+                "or train Full: exact network in this session first.")
+        stages = [("Creating the session folder", ["/bin/mkdir", "-p", str(folder)]),
+                  ("Copying the deployed decision model into this session",
+                   ["/bin/cp", "-R", str(version / "Decider.mlmodelc"), str(compiled)]),
+                  ("Copying the deployed decision model into this session",
+                   ["/bin/cp", str(version / "Decider.mlpackage.pt"), str(weights)])]
+    stroke = folder / "Model.mlmodelc"
+    stroke_weights = folder / "Model.mlpackage.pt"
+    if not stroke.is_dir():
+        deployed = read_deployed().get("candidate", "")
+        version = VERSIONS / deployed if deployed else None
+        if version and (version / "Model.mlmodelc").is_dir():
+            stages += [("Copying the deployed stroke into this session",
+                        ["/bin/rm", "-rf", str(folder / "Model.mlmodelc")]),
+                       ("Copying the deployed stroke into this session",
+                        ["/bin/rm", "-rf", str(folder / "Model.mlpackage")]),
+                       ("Copying the deployed stroke into this session",
+                        ["/bin/cp", "-R", str(version / "Model.mlmodelc"),
+                         str(folder / "Model.mlmodelc")])]
+            if (version / "Model.mlpackage.pt").is_file():
+                stages.append(("Copying the deployed stroke into this session",
+                               ["/bin/cp", str(version / "Model.mlpackage.pt"),
+                                str(folder / "Model.mlpackage.pt")]))
+            stroke = folder / "Model.mlmodelc"
+            stroke_weights = folder / "Model.mlpackage.pt"
+        else:
+            stroke = None
+            stroke_weights = None
+    if stroke and stroke_weights and stroke_weights.is_file():
+        return stages, weights, stroke_weights, stroke, "session"
+    return stages, weights, None, None, "session"
+
+
+def evolution_stages(task: str, config: dict) -> list[tuple[str, list[str]]]:
+    """The whole population run: build generation 0, measure it, breed, measure, … and save the champion."""
+    folder = session_dir(config)
+    engine = str(engine_path(config))
+    python = python_path(config)
+    evolve = str(ROOT / "AI" / "evolve_decider.py")
+    root = folder / "Evolution"
+    mode = "win" if task == "evolve_win" else "break"
+    population = max(2, int(config.get("population", 12)))
+    generations = max(1, int(config.get("generations", 8)))
+    evaluation_frames = max(1, int(config.get("evalFrames", 3)))
+    opponents = max(1, int(config.get("opponents", 2))) if mode == "win" else 0
+    opponents = min(opponents, population - 1)
+    mutation = max(0.0, float(config.get("mutation", 0.06)))
+    elite = max(1, min(int(config.get("elite", 2)), population))
+    crossover = max(0.0, min(1.0, float(config.get("crossover", 0.35))))
+    seed = int(config.get("seed", 1))
+    reds = int(config.get("reds", 10))
+    bootstrap, base, stroke_weights, stroke_model, base_label = evolution_base(folder, config)
+
+    build = [python, evolve, "init", "--dir", str(root), "--base", str(base),
+             "--base-label", base_label, "--population", str(population),
+             "--generations", str(generations), "--mutation", str(mutation),
+             "--elite", str(elite), "--crossover", str(crossover),
+             "--seed", str(seed), "--mode", mode, "--fresh"]
+    if stroke_weights:
+        build += ["--stroke", str(stroke_weights)]
+    if config.get("seedVersions", True):
+        for version in list_versions():
+            if version.get("hasDecider"):
+                build += ["--seed-version", str(VERSIONS / version["id"])]
+
+    stages = bootstrap + [("Building the initial population", build)]
+    for generation in range(generations):
+        for index in range(population):
+            model = root / "generations" / f"gen-{generation:03d}" \
+                    / f"individual-{index:03d}" / "Decider.mlmodelc"
+            if mode == "win":
+                faced: list[int] = []
+                for match in range(opponents):
+                    opponent = 0 if match == 0 else (index + match + 1) % population
+                    while opponent == index or opponent in faced:
+                        opponent = (opponent + 1) % population
+                    faced.append(opponent)
+                    rival = root / "generations" / f"gen-{generation:03d}" \
+                            / f"individual-{opponent:03d}" / "Decider.mlmodelc"
+                    report = root / "results" / f"gen-{generation:03d}" \
+                             / f"individual-{index:03d}-match-{match:03d}.json"
+                    command = [engine, "--ai-match", str(model), str(rival),
+                               "--frames", str(evaluation_frames), "--reds", str(reds),
+                               "--seed", str(seed + generation * 1000 + match * 17),
+                               "--report", str(report)]
+                    if stroke_model:
+                        command += ["--candidate-policy",
+                                    str(model.parent / "Model.mlmodelc")]
+                    name = (f"Generation {generation + 1}/{generations}: "
+                            f"individual {index + 1} vs {opponent + 1}")
+                    stages.append((name, command))
+            else:
+                report = root / "results" / f"gen-{generation:03d}" / f"individual-{index:03d}.json"
+                command = [engine, "--ai-selfplay-wins", str(root / "measure.bin"),
+                           "--decider", str(model), "--frames", str(evaluation_frames),
+                           "--reds", str(reds), "--seed", str(seed + generation * 1000),
+                           "--measure-only", "--report", str(report)]
+                if stroke_model:
+                    command += ["--candidate-policy", str(model.parent / "Model.mlmodelc")]
+                stages.append((f"Generation {generation + 1}/{generations}: "
+                               f"individual {index + 1}/{population}", command))
+        breed = [python, evolve, "breed", "--dir", str(root), "--generation", str(generation)]
+        if generation == generations - 1:
+            breed.append("--last")
+        stages.append((f"Selecting generation {generation + 1}", breed))
+    stages.append(("Saving the evolved champion",
+                   [python, evolve, "finish", "--dir", str(root), "--session", str(folder)]))
     return stages
 
 
@@ -418,9 +584,25 @@ def save_version(folder: Path, label: str, parent: str, config: dict) -> dict | 
         return None
     target = VERSIONS / next_version_id(label)
     target.mkdir(parents=True, exist_ok=True)
+    evolution = None
+    champion = folder / "Evolution" / "champion.json"
+    if champion.is_file():
+        try:
+            evolution = json.loads(champion.read_text())
+        except Exception:  # noqa: BLE001
+            evolution = None
+    # A decider-only evolution was measured without a candidate stroke. Copying an unrelated stroke from
+    # the session into its version would make deployment change the player that was actually measured.
+    skip_stroke = bool(evolution) and evolution.get("hasStroke") is False
     copied = []
     for name in ("Model.mlmodelc", "Model.mlpackage", "Model.mlpackage.pt",
                  "Decider.mlmodelc", "Decider.mlpackage", "Decider.mlpackage.pt"):
+        if skip_stroke and name.startswith("Model."):
+            continue
+        # An evolution writes compiled models and torch weights; an old `.mlpackage` left in the session
+        # would be a stale source, not the champion.
+        if evolution and name in ("Model.mlpackage", "Decider.mlpackage"):
+            continue
         source = folder / name
         if source.is_dir():
             shutil.copytree(source, target / name)
@@ -436,6 +618,16 @@ def save_version(folder: Path, label: str, parent: str, config: dict) -> dict | 
             "teacher": config.get("teacher", ""), "frames": config.get("frames"),
             "epochs": config.get("epochs"), "hidden": config.get("hidden"),
             "seed": config.get("seed"), "models": sorted(copied)}
+    if evolution:
+        meta["evolution"] = evolution
+        if meta["parent"] == "scratch" and evolution.get("base"):
+            meta["parent"] = evolution["base"]
+    if config.get("task") in EVOLUTION_TASKS:
+        meta["evolutionSettings"] = {
+            key: config.get(key) for key in
+            ("population", "generations", "evalFrames", "opponents", "mutation", "elite",
+             "crossover", "seedVersions")
+        }
     (target / "version.json").write_text(json.dumps(meta, indent=2))
     return {"id": target.name, **meta}
 
@@ -544,9 +736,13 @@ def run_stages(stages: list[tuple[str, list[str]]]) -> None:
                 return
         with LOCK:
             JOB.returncode = 0
-        if CURRENT["task"].startswith("full_") or CURRENT["task"] == "save_version":
+        if CURRENT["task"].startswith("full_") or CURRENT["task"] == "save_version" \
+                or CURRENT["task"] in EVOLUTION_TASKS:
             if JOB.session:
-                meta = save_version(JOB.session, CURRENT["config"].get("session", "session"),
+                label = CURRENT["config"].get("session", "session")
+                if CURRENT["task"] in EVOLUTION_TASKS:
+                    label += "-ga-" + ("win" if CURRENT["task"] == "evolve_win" else "break")
+                meta = save_version(JOB.session, label,
                                     CURRENT["config"].get("initVersion", ""), CURRENT["config"])
                 if meta:
                     say(f"\nVersion {meta['id']} saved — deploy it from the Versions panel.")
@@ -769,6 +965,8 @@ PAGE = r"""<!doctype html>
   .versionlist .live { color:var(--good); }
   .badge { display:inline-block; padding:1px 7px; border-radius:99px; border:1px solid var(--line);
            color:var(--muted); font-size:11px; margin-right:6px; }
+  .evolution { border-top:1px solid var(--line); margin-top:14px; padding-top:10px; }
+  .evolution.off { opacity:.5; }
   @media (max-width: 1000px) { main { grid-template-columns:1fr; } pre { height:380px; } }
 </style>
 </head>
@@ -785,6 +983,8 @@ PAGE = r"""<!doctype html>
       <button class="small" data-preset="candidate">Candidate + swerve</button>
       <button class="small" data-preset="decider">All decisions</button>
       <button class="small" data-preset="exact">Exact network</button>
+      <button class="small" data-preset="evolveWin">Evolve · win</button>
+      <button class="small" data-preset="evolveBreak">Evolve · break</button>
     </div>
     <label for="task">What to run</label>
     <select id="task">
@@ -802,6 +1002,8 @@ PAGE = r"""<!doctype html>
       <option value="convert_candidate">Convert the saved weights (no training)</option>
       <option value="selfplay_wins">Self-play: network vs itself, win-weighted (continue this session)</option>
       <option value="selfplay_breaks">Self-play: network vs itself, break-weighted (continue this session)</option>
+      <option value="evolve_win">Evolve: win-selected population (large self-play run)</option>
+      <option value="evolve_break">Evolve: break-selected population (large self-play run)</option>
       <option value="deploy">Deploy the session's models to the game</option>
       <option value="save_version">Save this session as a version</option>
       <option value="setup_python">Set up the training Python (venv + install)</option>
@@ -832,6 +1034,29 @@ PAGE = r"""<!doctype html>
     <label for="seed">Seed</label><input id="seed" type="number" value="1">
     <label><input id="aimSweep" type="checkbox" checked style="width:auto"> Aim sweep (±3/7/15°) for swerve labels</label>
     <label><input id="lineTuning" type="checkbox" checked style="width:auto"> Line-aware tuning</label>
+    <div class="evolution off" id="evolutionPanel">
+      <h2>Evolution</h2>
+      <p class="hint">Used by the two <b>Evolve</b> modes. The base is the chosen version under
+      <i>Start from</i>, or this session's decision model. Each generation measures everyone, keeps the
+      elite, then breeds the rest by weight crossover and mutation.</p>
+      <div class="row">
+        <div><label for="population">Population</label><input id="population" type="number" min="2" value="12"></div>
+        <div><label for="generations">Generations</label><input id="generations" type="number" min="1" value="8"></div>
+      </div>
+      <div class="row">
+        <div><label for="evalFrames">Frames each</label><input id="evalFrames" type="number" min="1" value="3"></div>
+        <div><label for="opponents">Opponents (win)</label><input id="opponents" type="number" min="1" value="2"></div>
+      </div>
+      <div class="row">
+        <div><label for="mutation">Mutation σ</label><input id="mutation" type="number" step="0.01" min="0" value="0.06"></div>
+        <div><label for="elite">Elite kept</label><input id="elite" type="number" min="1" value="2"></div>
+      </div>
+      <div class="row">
+        <div><label for="crossover">Crossover rate</label><input id="crossover" type="number" step="0.05" min="0" max="1" value="0.35"></div>
+        <div><label>&nbsp;</label><label><input id="seedVersions" type="checkbox" checked style="width:auto"> Seed from saved versions</label></div>
+      </div>
+      <p class="hint" id="evolutionHint">Choose an Evolve task to see the size of the run.</p>
+    </div>
     <label for="python">Python for training (torch + coremltools)</label>
     <input id="python" placeholder="/path/to/venv/bin/python">
     <label for="engine">Snooker engine</label>
@@ -872,12 +1097,15 @@ PAGE = r"""<!doctype html>
 const $ = (id) => document.getElementById(id);
 let since = 0, timer = null, startedAt = 0;
 const fields = ["task","session","initVersion","teacher","frames","reds","epochs","hidden","batch",
-                "lr","seed","aimSweep","lineTuning","python","engine"];
+                "lr","seed","aimSweep","lineTuning","population","generations","evalFrames",
+                "opponents","mutation","elite","crossover","seedVersions","python","engine"];
 function config() {
   const c = {};
   for (const f of fields) c[f] = $(f).type === "checkbox" ? $(f).checked : $(f).value;
   c.frames = +c.frames; c.reds = +c.reds; c.epochs = +c.epochs; c.hidden = +c.hidden;
   c.batch = +c.batch; c.lr = +c.lr; c.seed = +c.seed;
+  for (const k of ["population","generations","evalFrames","opponents","mutation","elite","crossover"])
+    c[k] = +c[k];
   return c;
 }
 let root = "";
@@ -915,13 +1143,39 @@ const presets = {
   candidate: { task:"full_candidate", teacher:"hard", session:"candidate-01", frames:12, aimSweep:true },
   decider:   { task:"full_decider", teacher:"hard", session:"decisions-01", frames:12 },
   exact:     { task:"full_exact", teacher:"exact", session:"exact-01", frames:14, aimSweep:true },
+  evolveWin: { task:"evolve_win", session:"evolve-win-01", population:12, generations:8,
+               evalFrames:3, opponents:2, mutation:0.06, elite:2, crossover:0.35,
+               seedVersions:true },
+  evolveBreak:{ task:"evolve_break", session:"evolve-break-01", population:12, generations:8,
+               evalFrames:3, opponents:2, mutation:0.06, elite:2, crossover:0.35,
+               seedVersions:true },
 };
 document.querySelectorAll("[data-preset]").forEach(b => b.onclick = () => {
   const p = presets[b.dataset.preset];
   for (const [k,v] of Object.entries(p)) {
     if ($(k).type === "checkbox") $(k).checked = v; else $(k).value = v;
   }
+  syncEvolution();
 });
+function syncEvolution() {
+  const task = $("task").value;
+  const on = task.startsWith("evolve_");
+  $("evolutionPanel").classList.toggle("off", !on);
+  if (!on) {
+    $("evolutionHint").textContent = "Used by the two Evolve modes; the other tasks ignore these fields.";
+    return;
+  }
+  const frames = Math.max(1, +$("population").value) * Math.max(1, +$("generations").value)
+    * Math.max(1, +$("evalFrames").value)
+    * (task === "evolve_win" ? Math.max(1, +$("opponents").value) : 1);
+  $("evolutionHint").textContent =
+    `This run measures about ${frames} frames. Win-selected means frames won against the current ` +
+    `champion and peers; break-selected means the highest break in self-play. Frames run at the same ` +
+    `speed as a normal computer game, so budget hours, not minutes.`;
+}
+$("task").addEventListener("change", syncEvolution);
+for (const id of ["population","generations","evalFrames","opponents"])
+  $(id).addEventListener("input", syncEvolution);
 async function poll() {
   const r = await (await fetch("/api/status?since=" + since)).json();
   if (r.lines && r.lines.length) {
@@ -986,7 +1240,10 @@ $("check").onclick = async () => {
   $("log").textContent += r.log + "\n" + (r.ok ? "Ready to train."
     : "The check failed — the log above says why (missing packages, or Core ML conversion unavailable).");
 };
-defaults().then(() => { $("log").textContent = "Ready. Pick a preset, then Run."; });
+defaults().then(() => {
+  syncEvolution();
+  $("log").textContent = "Ready. Pick a preset, then Run.";
+});
 </script>
 </body>
 </html>

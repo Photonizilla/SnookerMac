@@ -666,15 +666,24 @@ enum ComputerOpponent {
         var candidateSamples: [CandidateSample] = []
         var wins = [0, 0]
         var bestBreak = [0, 0]
+        var frameReports: [[String: Any]] = []
+        var totalDecisions = 0
+        var unfinished = 0
         for frame in 0..<options.frames {
             let driver = FrameDriver(playerNames: ["A", "B"])
             driver.game.decideTheDraw = { frame % 2 }
             loadTheStart(of: frame, into: driver, options: options)
+            // The cue action's own randomness is seeded too, so the same seed really is the same match
+            // and an evolution generation compares its individuals on the same misses as well as the
+            // same layouts.
+            var random = SeededRandom(seed: options.seed &+ UInt64(frame) &* 104_729)
+            let unit: () -> Double = { random.unit() }
             let players = (0...1).map { seat -> ComputerPlayer in
                 let player = ComputerPlayer(playerIndex: seat, difficulty: options.difficulty)
                 player.decideEverything = decision
                 player.shotPolicy = shotPolicy
                 player.aimError = ComputerOpponent.selfPlayAimError
+                player.aimErrorSource = unit
                 player.decideTheDraw = { frame % 2 }
                 return player
             }
@@ -686,30 +695,32 @@ enum ComputerOpponent {
                 let who = driver.game.state.currentPlayer
                 let situation = players[who].policySituation(for: driver)
                 let action = players[who].nextAction(for: driver)
-                if let label = policyAction(action) {
-                    samples.append(AllPolicySample(inputs: situation.values,
-                                                   action: Float(label.kind), shot: label.shot,
-                                                   placement: Float(label.placement),
-                                                   colour: Float(label.colour)))
-                    frameSamples.append((samples.count - 1, who))
-                }
-                if case .shoot(let shot) = action {
-                    // The stroke is trained from the same frame: the candidates the geometry offered, the
-                    // one the network played, and the stroke it played.
-                    let candidates = players[who].policyCandidates(for: driver)
-                    if !candidates.isEmpty {
-                        var bestIndex = 0
-                        var bestCost = Double.greatestFiniteMagnitude
-                        for (index, candidate) in candidates.enumerated() {
-                            let cost = ShotGeometry.angleBetween(candidate.shot.angle, shot.angle)
-                            if cost < bestCost { bestCost = cost; bestIndex = index }
-                        }
-                        let target = policyLabels(shot)
-                        for (index, candidate) in candidates.enumerated() {
-                            candidateSamples.append(CandidateSample(
-                                inputs: situation.candidateValues(candidate),
-                                label: index == bestIndex ? 1 : 0, shot: target))
-                            frameCandidates.append((candidateSamples.count - 1, who))
+                if !options.measureOnly {
+                    if let label = policyAction(action) {
+                        samples.append(AllPolicySample(inputs: situation.values,
+                                                       action: Float(label.kind), shot: label.shot,
+                                                       placement: Float(label.placement),
+                                                       colour: Float(label.colour)))
+                        frameSamples.append((samples.count - 1, who))
+                    }
+                    if case .shoot(let shot) = action {
+                        // The stroke is trained from the same frame: the candidates the geometry offered,
+                        // the one the network played, and the stroke it played.
+                        let candidates = players[who].policyCandidates(for: driver)
+                        if !candidates.isEmpty {
+                            var bestIndex = 0
+                            var bestCost = Double.greatestFiniteMagnitude
+                            for (index, candidate) in candidates.enumerated() {
+                                let cost = ShotGeometry.angleBetween(candidate.shot.angle, shot.angle)
+                                if cost < bestCost { bestCost = cost; bestIndex = index }
+                            }
+                            let target = policyLabels(shot)
+                            for (index, candidate) in candidates.enumerated() {
+                                candidateSamples.append(CandidateSample(
+                                    inputs: situation.candidateValues(candidate),
+                                    label: index == bestIndex ? 1 : 0, shot: target))
+                                frameCandidates.append((candidateSamples.count - 1, who))
+                            }
                         }
                     }
                 }
@@ -726,6 +737,23 @@ enum ComputerOpponent {
                 wins[winner] += 1
                 for sample in frameSamples where sample.who == winner { samples[sample.index].won = 1 }
             }
+            let scores = driver.game.state.scores
+            let breaks = (0...1).map { driver.game.state.players[$0].highestBreak }
+            // The per-frame break comes from the rules' own record, so a measuring run gets it too: the
+            // sample-by-sample update below only exists while a dataset is being collected.
+            highestBreak[0] = max(highestBreak[0], breaks[0])
+            highestBreak[1] = max(highestBreak[1], breaks[1])
+            let finished = driver.game.state.frameOver
+            if !finished { unfinished += 1 }
+            totalDecisions += decisions
+            frameReports.append([
+                "index": frame + 1,
+                "scores": scores,
+                "winner": driver.game.state.winner.map { $0 == 0 ? "A" : "B" } ?? NSNull(),
+                "breaks": breaks,
+                "decisions": decisions,
+                "finished": finished,
+            ])
             for sample in frameSamples {
                 samples[sample.index].highestBreak = Float(highestBreak[sample.who])
             }
@@ -741,6 +769,27 @@ enum ComputerOpponent {
                     + " \(driver.game.state.winner.map { $0 == 0 ? "A" : "B" } ?? "unfinished"),"
                     + " breaks \(highestBreak[0]) and \(highestBreak[1]),"
                     + " \(samples.count) samples, \(String(format: "%.0f", Date().timeIntervalSince(start))) s")
+        }
+        if let reportPath = options.reportPath {
+            let report: [String: Any] = [
+                "mode": "selfplay",
+                "model": deciderPath,
+                "frames": frameReports,
+                "summary": [
+                    "frames": options.frames,
+                    "wins": wins,
+                    "breaks": bestBreak,
+                    "decisions": totalDecisions,
+                    "unfinished": unfinished,
+                    "points": [driverPoints(in: frameReports, side: 0),
+                               driverPoints(in: frameReports, side: 1)],
+                ],
+            ]
+            writeReport(report, to: reportPath)
+        }
+        if options.measureOnly {
+            print("measured \(options.frames) frame(s) without writing a dataset")
+            return 0
         }
         guard writeAllPolicySamples(samples, to: path) else { return 1 }
         let candidatesPath = path.hasSuffix(".bin")
@@ -775,16 +824,23 @@ enum ComputerOpponent {
         }
         var wins = [0, 0]
         var points = [0, 0]
+        var highestBreaks = [0, 0]
+        var frameReports: [[String: Any]] = []
+        var totalDecisions = 0
+        var unfinished = 0
         for frame in 0..<options.frames {
             let driver = FrameDriver(playerNames: ["A", "B"])
             driver.game.decideTheDraw = { frame % 2 }
             loadTheStart(of: frame, into: driver, options: options)
+            var random = SeededRandom(seed: options.seed &+ UInt64(frame) &* 104_729)
+            let unit: () -> Double = { random.unit() }
             // Alternate who breaks, so neither model gets the opening every frame.
             let aSeat = frame % 2
             let models = aSeat == 0 ? [a, b] : [b, a]
             let players = (0...1).map { seat -> ComputerPlayer in
                 let player = ComputerPlayer(playerIndex: seat, difficulty: options.difficulty)
                 player.aimError = ComputerOpponent.selfPlayAimError
+                player.aimErrorSource = unit
                 player.decideEverything = models[seat]
                 player.shotPolicy = shotPolicy
                 player.decideTheDraw = { frame % 2 }
@@ -803,11 +859,73 @@ enum ComputerOpponent {
             if let winner = driver.game.state.winner {
                 wins[winner == aSeat ? 0 : 1] += 1
             }
+            let scoresAB = aSeat == 0 ? scores : [scores[1], scores[0]]
+            let breaksSeat = (0...1).map { driver.game.state.players[$0].highestBreak }
+            let breaks = aSeat == 0 ? breaksSeat : [breaksSeat[1], breaksSeat[0]]
+            let finished = driver.game.state.frameOver
+            if !finished { unfinished += 1 }
+            totalDecisions += decisions
+            for side in 0...1 { highestBreaks[side] = max(highestBreaks[side], breaks[side]) }
+            frameReports.append([
+                "index": frame + 1,
+                "seatOfA": aSeat,
+                "scores": scoresAB,
+                "winner": driver.game.state.winner.map { ($0 == aSeat ? "A" : "B") as Any } ?? NSNull(),
+                "breaks": breaks,
+                "decisions": decisions,
+                "finished": finished,
+            ])
             print("  frame \(frame + 1): \(scores[0])–\(scores[1]),"
                     + " \(driver.game.state.winner.map { $0 == aSeat ? "A" : "B" } ?? "unfinished")")
         }
         print("frames won  A \(wins[0]) – \(wins[1]) B   (points \(points[0])–\(points[1]))")
+        if let reportPath = options.reportPath {
+            let report: [String: Any] = [
+                "mode": "match",
+                "a": first,
+                "b": second,
+                "frames": frameReports,
+                "summary": [
+                    "frames": options.frames,
+                    "wins": wins,
+                    "points": points,
+                    "breaks": highestBreaks,
+                    "decisions": totalDecisions,
+                    "unfinished": unfinished,
+                ],
+            ]
+            writeReport(report, to: reportPath)
+            // A report is a measurement: the caller is an evolution loop, where losing is an answer and
+            // not a failed command. Without a report the old acceptance semantics stay.
+            return 0
+        }
         return wins[1] > wins[0] ? 1 : 0
+    }
+
+    /// The points each side of a self-play report scored, added up over the frames. Both seats are in the
+    /// report's own seat order, which is the order the frame lines use.
+    private static func driverPoints(in frames: [[String: Any]], side: Int) -> Int {
+        frames.reduce(0) { total, frame in
+            let scores = frame["scores"] as? [Int] ?? [0, 0]
+            return total + (scores.count > side ? scores[side] : 0)
+        }
+    }
+
+    /// A machine-readable measurement for the studio's evolution loop. Everything the selection needs —
+    /// frames, points, highest breaks, whether a frame finished — is in one file, so the loop never has to
+    /// read a human log.
+    private static func writeReport(_ report: [String: Any], to path: String) {
+        do {
+            let url = URL(fileURLWithPath: path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            let data = try JSONSerialization.data(withJSONObject: report,
+                                                   options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: url)
+            print("wrote \(path)")
+        } catch {
+            print("could not write \(path): \(error)")
+        }
     }
 
     // MARK: - What thinking costs
@@ -887,6 +1005,12 @@ enum ComputerOpponent {
         /// A learned policy **over the proposed shots**: `--candidate-policy <model>`. The geometry supplies
         /// the candidates; the network ranks them and gives the stroke.
         var candidatePolicyPath: String?
+        /// Where a headless run writes its machine-readable measurement — frames, points, breaks, decisions.
+        /// A match with a report is a measurement, so losing does not make the command fail.
+        var reportPath: String?
+        /// Whether a self-play round should measure only, without collecting or writing training data. The
+        /// evolution loop asks the same frames for their breaks and points, not for another dataset.
+        var measureOnly = false
         /// Whether the teacher's tuning also tries aim offsets, so that swerve shots are labelled with the
         /// line they actually have to be aimed along: `--aim-sweep`.
         var aimSweep = false
@@ -940,6 +1064,8 @@ enum ComputerOpponent {
             policyPath = ComputerOpponent.argument("--policy", in: arguments)
             deciderPath = ComputerOpponent.argument("--decider", in: arguments)
             candidatePolicyPath = ComputerOpponent.argument("--candidate-policy", in: arguments)
+            reportPath = ComputerOpponent.argument("--report", in: arguments)
+            measureOnly = arguments.contains("--measure-only")
             aimSweep = arguments.contains("--aim-sweep")
             if let value = ComputerOpponent.argument("--frames", in: arguments), let n = Int(value) {
                 frames = max(1, n)

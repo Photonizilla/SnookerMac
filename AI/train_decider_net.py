@@ -233,9 +233,18 @@ def main():
 
     if arguments.no_coreml:
         return
+    convert(model, inputs.shape[1], arguments.out)
+
+
+def convert(model, feature_count, out):
+    """The torch model to an `.mlpackage`, with the output named `decision`.
+
+    Shared with `evolve_decider.py`, which mutates and crosses these weights and then needs exactly the
+    same Core ML shape the supervised trainer writes.
+    """
     import coremltools as ct
     model = model.cpu().eval()
-    example = torch.zeros(1, inputs.shape[1], dtype=torch.float32)
+    example = torch.zeros(1, feature_count, dtype=torch.float32)
     traced = torch.jit.trace(model, example)
     mlmodel = ct.convert(
         traced,
@@ -247,8 +256,8 @@ def main():
     )
     mlmodel.short_description = ("Every decision a player makes from PositionFeatures and the rules' masks:"
                                  " action logits, stroke, placement logits, colour logits")
-    mlmodel.save(arguments.out)
-    print(f"wrote {arguments.out}")
+    mlmodel.save(out)
+    print(f"wrote {out}")
 
 
 if __name__ == "__main__":

@@ -12,8 +12,9 @@ For running a session without the command line:
 python3 AI/training_studio.py
 ```
 
-It opens a local page (only on this Mac, on `127.0.0.1`) with four presets — **Shot policy**, **Candidate +
-swerve**, **All decisions** and **Exact network** — and the knobs that matter:
+It opens a local page (only on this Mac, on `127.0.0.1`) with six presets — **Shot policy**, **Candidate +
+swerve**, **All decisions**, **Exact network**, **Evolve · win** and **Evolve · break** — and the knobs
+that matter:
 
 - the teacher: Hard (σ 0.03°), Exact (σ 0), Medium or Easy;
 - how much data: frames, reds and seed, plus the **aim sweep** that puts swerve lines into the labels;
@@ -91,6 +92,57 @@ A session that trained only a **stroke** has no decision model to continue. The 
 **deployed version's** decision model and its torch weights, copies them into the session as the starting
 point, and says so in the log; if no version is deployed either, it stops with that reason rather than
 starting and failing at the first command.
+
+### Population evolution (genetic algorithm)
+
+The two **Evolve** tasks are a genetic algorithm over the neural player. They do not use a gradient step:
+a population of complete genomes is measured by playing frames, the best are kept, and the rest are bred
+by neuron-wise crossover and Gaussian weight mutation. A genome is the **all-decisions network**
+(`Decider.*`) plus, when the base version has one, the **candidate-conditioned stroke** (`Model.*`). Both
+are mutated and crossed together, so break building can improve the shot as well as the choice of shot.
+If the base has only a decider, the decider's own six-number shot head is what plays and only that network
+is evolved.
+
+* **Evolve: win-selected** — each individual plays a schedule of matches against the current champion and
+  peers (the same table seeds for every individual). Fitness is frames won minus frames lost, then frames
+  won, then fewer unfinished frames, then points difference.
+* **Evolve: break-selected** — each individual plays self-play frames on the same seeds. Fitness is its
+  highest break, then its second-highest break, then whether the frames finished, then total points.
+
+The parameters in the Evolution panel are:
+
+| field | meaning |
+|---|---|
+| Population | how many weight sets are alive at once. The first is the base; several saved versions can seed the rest. |
+| Generations | how many measure → select → breed rounds to run. |
+| Frames each | frames per match, or per individual in break mode. More frames means less noise and a longer run. |
+| Opponents (win) | matches each individual plays in a generation: the champion first, then distinct peers. |
+| Mutation σ | the Gaussian step as a fraction of each tensor's own spread. 0.06 is a practical starting point; larger explores more and destroys more. |
+| Elite kept | the best individuals copied unchanged into the next generation. |
+| Crossover rate | the chance an offspring is made from two parents instead of one. |
+| Seed from saved versions | use every compatible version (decider plus stroke) in Versions as extra starting genes. |
+
+The run is **large by design**. With 12 individuals, 8 generations and 3 frames each, break mode measures
+about 288 frames; win mode with 2 opponents measures about 576. At the speed of a normal computer game that
+is hours, not minutes. The hint under the fields shows the frame count before you press Run. A smoke run
+with 2 individuals, 1 generation and 1 frame is the quick wiring check, but its fitness is almost entirely
+noise.
+
+Every generation writes its ranking to `AI/Sessions/<session>/Evolution/history.json`, keeps each
+individual's weights and compiled model under `Evolution/generations/`, and copies the best-ever model into
+the session as `Decider.mlmodelc` + `Decider.mlpackage.pt`. That means **Stop** does not lose the best
+model found so far: save the session as a version and use it under **Start from** to continue. At the end
+of a completed run the studio saves the champion as a new version automatically; the version records the
+champion's generation, fitness and the evolution settings, and contains the stroke model it was measured
+with, so deploying it replaces both halves of the player. A decider-only evolution contains only the
+decider; deploy it knowing that the game will still use whichever candidate stroke is already installed.
+
+A frame that reaches the engine's 900-decision cap is still measured. It contributes its points and counts
+as **unfinished**; break-selected fitness ranks unfinished frames below finished ones with the same breaks.
+The deployed network currently produces one-point breaks and sometimes fills the decision budget, so early
+generations are expected to be noisy. The honest use of these modes is to run enough frames that a break
+of 2 or 3 is distinguishable from a lucky one — and to keep the base version, because mutation is a local
+search around it, not a replacement for supervised training.
 
 The studio itself needs only the Python standard library; the training needs `torch` and `coremltools` in
 the interpreter you point it at, for example:
