@@ -23,6 +23,9 @@ import torch.nn as nn
 
 MAGIC = b"SNOOKERCV1"
 SHOT = 6
+# The format's input width (`PolicySituation.candidateCount`). Whatever the stride leaves past the label and
+# the six shot numbers is the frame's outcomes: a self-play round adds won and highest break there.
+INPUTS = 191
 
 
 def read_dataset(path):
@@ -31,8 +34,9 @@ def read_dataset(path):
         raise SystemExit(f"{path} is not a candidate dataset (it starts with {blob[:10]!r})")
     count, stride = struct.unpack_from("<II", blob, 10)
     rows = np.frombuffer(blob, dtype="<f4", offset=18, count=count * stride).reshape(count, stride)
-    split = stride - 1 - SHOT
-    return rows[:, :split].copy(), rows[:, split].copy(), rows[:, split + 1:].copy()
+    inputs = rows[:, :INPUTS].copy()
+    rest = rows[:, INPUTS:]
+    return inputs, rest[:, 0].copy(), rest[:, 1:1 + SHOT].copy(), rest[:, 1 + SHOT:].copy()
 
 
 class CandidateNet(nn.Module):
@@ -67,6 +71,10 @@ def main():
     parser.add_argument("--convert-only", action="store_true",
                         help="skip training: load <out>.pt and write the Core ML package from it")
     parser.add_argument("--init", help="torch weights to start from (an earlier version)")
+    parser.add_argument("--win-weighted", action="store_true",
+                        help="weight each row by whether its player won the frame (a self-play round)")
+    parser.add_argument("--break-weighted", action="store_true",
+                        help="weight each row by the highest break its player made in the frame")
     arguments = parser.parse_args()
     torch.manual_seed(arguments.seed)
 
@@ -82,7 +90,20 @@ def main():
         convert(model, features, arguments.out)
         return
 
-    features, label, shot = read_dataset(arguments.dataset)
+    features, label, shot, outcomes = read_dataset(arguments.dataset)
+    won = outcomes[:, 0] if outcomes.ndim > 1 and outcomes.shape[1] >= 1 else np.zeros(len(features))
+    highest = outcomes[:, 1] if outcomes.ndim > 1 and outcomes.shape[1] >= 2 else np.zeros(len(features))
+    if arguments.break_weighted and not (outcomes.ndim > 1 and outcomes.shape[1] >= 2):
+        raise SystemExit("this dataset has no highest-break column: export it from a self-play round")
+    if arguments.break_weighted:
+        sample_weight = 0.15 + 0.85 * np.minimum(1.0, highest / 50.0)
+    elif arguments.win_weighted:
+        sample_weight = 0.15 + 0.85 * won
+    else:
+        sample_weight = np.ones(len(features))
+    if arguments.win_weighted or arguments.break_weighted:
+        print(f"weighted rows: won {100 * won.mean():.0f}%, breaks median {np.median(highest):.0f}, "
+              f"max {highest.max():.0f}")
     # The aim head is a **residual**: the turn from the candidate's own line. That is what lets the network
     # move a shot ten degrees for a swerve, and what the loss then actually measures. The candidate's aim
     # is the first pair after the position features.
@@ -109,6 +130,7 @@ def main():
     x_val = torch.tensor(features[val], dtype=torch.float32)
     l_val = torch.tensor(label[val], dtype=torch.float32)
     s_val = torch.tensor(shot[val], dtype=torch.float32)
+    w_train = torch.tensor(sample_weight[train], dtype=torch.float32)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"training on {device}")
     hidden = arguments.hidden
@@ -129,12 +151,14 @@ def main():
     pos_weight = torch.tensor([min(20.0, negatives / max(1.0, positives))], device=device)
     shot_weights = torch.tensor([4.0, 4.0, 2.0, 1.5, 1.5, 1.0], device=device)
 
-    def loss_of(out, chosen, target):
-        loss = nn.functional.binary_cross_entropy_with_logits(
-            out[:, 0], chosen, pos_weight=pos_weight)
+    def loss_of(out, chosen, target, w):
+        bce = nn.functional.binary_cross_entropy_with_logits(
+            out[:, 0], chosen, pos_weight=pos_weight, reduction="none")
+        loss = (bce * w).mean()
         pick = chosen > 0.5
         if pick.any():
-            loss = loss + (((out[pick, 1:] - target[pick]) ** 2) * shot_weights).mean()
+            mse = (((out[pick, 1:] - target[pick]) ** 2) * shot_weights).mean(dim=1)
+            loss = loss + (mse * w[pick]).mean()
         return loss
 
     def aim_error(out, chosen, target):
@@ -169,7 +193,7 @@ def main():
             index = shuffle[start:start + arguments.batch]
             bx, bl, bs = x_train[index].to(device), l_train[index].to(device), s_train[index].to(device)
             optimiser.zero_grad()
-            loss = loss_of(model(bx), bl, bs)
+            loss = loss_of(model(bx), bl, bs, w_train[index].to(device))
             loss.backward()
             optimiser.step()
             total += float(loss.detach()) * len(index)

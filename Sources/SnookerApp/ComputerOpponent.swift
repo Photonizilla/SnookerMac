@@ -358,6 +358,9 @@ enum ComputerOpponent {
         var inputs: [Float]
         var label: Float
         var shot: [Float]
+        /// The frame's outcome for the player who took the shot: the weight a self-play round learns from.
+        var won: Float = 0
+        var highestBreak: Float = 0
     }
 
     /// `SNOOKERCV1`: count, stride; the inputs, the label and the stroke's six numbers.
@@ -371,11 +374,13 @@ enum ComputerOpponent {
             withUnsafeBytes(of: value.bitPattern.littleEndian) { data.append(contentsOf: $0) }
         }
         put(UInt32(samples.count))
-        put(UInt32(PolicySituation.candidateCount + 1 + 6))
+        put(UInt32(PolicySituation.candidateCount + 1 + 6 + 2))
         for sample in samples {
             for value in sample.inputs { put(value) }
             put(sample.label)
             for value in sample.shot { put(value) }
+            put(sample.won)
+            put(sample.highestBreak)
         }
         do {
             try data.write(to: URL(fileURLWithPath: path))
@@ -658,6 +663,7 @@ enum ComputerOpponent {
         print(String(format: "self-play cue action: σ %.2f° of aim error on every shot",
                      ComputerOpponent.selfPlayAimError * 180 / .pi))
         var samples: [AllPolicySample] = []
+        var candidateSamples: [CandidateSample] = []
         var wins = [0, 0]
         var bestBreak = [0, 0]
         for frame in 0..<options.frames {
@@ -673,6 +679,7 @@ enum ComputerOpponent {
                 return player
             }
             var frameSamples: [(index: Int, who: Int)] = []
+            var frameCandidates: [(index: Int, who: Int)] = []
             var highestBreak = [0, 0]
             var decisions = 0
             while !driver.game.state.frameOver, decisions < 900 {
@@ -685,6 +692,26 @@ enum ComputerOpponent {
                                                    placement: Float(label.placement),
                                                    colour: Float(label.colour)))
                     frameSamples.append((samples.count - 1, who))
+                }
+                if case .shoot(let shot) = action {
+                    // The stroke is trained from the same frame: the candidates the geometry offered, the
+                    // one the network played, and the stroke it played.
+                    let candidates = players[who].policyCandidates(for: driver)
+                    if !candidates.isEmpty {
+                        var bestIndex = 0
+                        var bestCost = Double.greatestFiniteMagnitude
+                        for (index, candidate) in candidates.enumerated() {
+                            let cost = ShotGeometry.angleBetween(candidate.shot.angle, shot.angle)
+                            if cost < bestCost { bestCost = cost; bestIndex = index }
+                        }
+                        let target = policyLabels(shot)
+                        for (index, candidate) in candidates.enumerated() {
+                            candidateSamples.append(CandidateSample(
+                                inputs: situation.candidateValues(candidate),
+                                label: index == bestIndex ? 1 : 0, shot: target))
+                            frameCandidates.append((candidateSamples.count - 1, who))
+                        }
+                    }
                 }
                 decisions += 1
                 guard ComputerMatch.apply(action, to: driver) else { break }
@@ -702,6 +729,11 @@ enum ComputerOpponent {
             for sample in frameSamples {
                 samples[sample.index].highestBreak = Float(highestBreak[sample.who])
             }
+            for sample in frameCandidates {
+                candidateSamples[sample.index].won =
+                    driver.game.state.winner == sample.who ? 1 : 0
+                candidateSamples[sample.index].highestBreak = Float(highestBreak[sample.who])
+            }
             bestBreak[0] = max(bestBreak[0], highestBreak[0])
             bestBreak[1] = max(bestBreak[1], highestBreak[1])
             print("  frame \(frame + 1) of \(options.frames): \(decisions) decisions,"
@@ -711,10 +743,14 @@ enum ComputerOpponent {
                     + " \(samples.count) samples, \(String(format: "%.0f", Date().timeIntervalSince(start))) s")
         }
         guard writeAllPolicySamples(samples, to: path) else { return 1 }
+        let candidatesPath = path.hasSuffix(".bin")
+            ? String(path.dropLast(4)) + "-candidates.bin" : path + "-candidates.bin"
+        guard writeCandidateSamples(candidateSamples, to: candidatesPath) else { return 1 }
         let wonSamples = samples.filter { $0.won > 0 }.count
         print("wrote \(samples.count) self-play samples (\(wonSamples) from the frames that were won)"
                 + " to \(path); the frames were \(wins[0])–\(wins[1]);"
                 + " the highest breaks were \(bestBreak[0]) and \(bestBreak[1])")
+        print("wrote \(candidateSamples.count) candidate rows for the stroke to \(candidatesPath)")
         return 0
     }
 

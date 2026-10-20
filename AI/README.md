@@ -78,9 +78,11 @@ shot:
   reaching full weight at 50 (so a decision that was part of a 40 break counts far more than one made in a
   frame that never got going). The frame's winner is not consulted.
 
-Both write a self-play dataset, fine-tune the existing decision model from its weights, keep the old model
-aside, and finish with a match between old and new — frames won are the acceptance for the win-weighted
-round, and the break distribution is the thing to watch for the break-weighted one.
+Both write **two** datasets — the decisions, and the candidate rows of the same shots — and fine-tune
+**both** networks: the decision model on the decision rows and the **stroke model** on the candidate rows,
+weighted by the same outcome (who won, or the highest break). Each keeps the old decision model aside,
+compiles both, and finishes with a match between old and new — frames won are the acceptance for the
+win-weighted round, and the break distribution is the thing to watch for the break-weighted one.
 
 The export prints **each frame's highest break for both players** as it goes — `breaks 14 and 6` — and the
 run's two best at the end, so a break-weighted round can be followed without reading the dataset.

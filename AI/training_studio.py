@@ -310,12 +310,15 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                      "--win-weighted", "--init", str(folder / "Decider.mlpackage.pt")] + training
         compile_decider = ["xcrun", "coremlcompiler", "compile",
                            str(folder / "Decider.mlpackage"), str(folder)]
+        stroke = stroke_training_stages(folder, folder / "selfplay-candidates.bin",
+                                        "--win-weighted", python, training)
         match = [engine, "--ai-match", str(folder / "Decider-old.mlmodelc"), str(decider),
                  "--frames", str(max(2, int(config.get("frames", 8)) // 2))]
         if candidate.exists():
             match += ["--candidate-policy", str(candidate)]
         return bootstrap + [("The network plays itself", play_self),
                 ("Keeping the old model", keep_old),
+                *stroke,
                 ("Training on the frames it won", fine_tune),
                 ("Compiling the new model", compile_decider),
                 ("A match: old against new", match)]
@@ -337,12 +340,15 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                      "--break-weighted", "--init", str(folder / "Decider.mlpackage.pt")] + training
         compile_decider = ["xcrun", "coremlcompiler", "compile",
                            str(folder / "Decider.mlpackage"), str(folder)]
+        stroke = stroke_training_stages(folder, folder / "breaks-candidates.bin",
+                                        "--break-weighted", python, training)
         match = [engine, "--ai-match", str(folder / "Decider-old.mlmodelc"), str(decider),
                  "--frames", str(max(2, int(config.get("frames", 8)) // 2))]
         if candidate.exists():
             match += ["--candidate-policy", str(candidate)]
         return bootstrap + [("The network plays itself", play_self),
                 ("Keeping the old model", keep_old),
+                *stroke,
                 ("Training on the frames with the highest breaks", fine_tune),
                 ("Compiling the new model", compile_decider),
                 ("A match: old against new", match)]
@@ -468,6 +474,20 @@ def init_weights(config: dict, kind: str) -> Path | None:
     name = "Decider.mlpackage.pt" if kind == "decider" else "Model.mlpackage.pt"
     path = VERSIONS / version / name
     return path if path.is_file() else None
+
+
+def stroke_training_stages(folder: Path, dataset: Path, flag: str, python: str,
+                           training: list[str]) -> list[tuple[str, list[str]]]:
+    """Train and compile the **stroke** from a self-play round's candidate rows."""
+    model = folder / "Model.mlpackage"
+    weights = folder / "Model.mlpackage.pt"
+    command = [python, str(ROOT / "AI" / "train_candidate_net.py"), str(dataset),
+               str(model), flag] + training
+    if weights.is_file():
+        command += ["--init", str(weights)]
+    return [("Training the stroke on the same frames", command),
+            ("Compiling the stroke model", ["xcrun", "coremlcompiler", "compile",
+                                            str(model), str(folder)])]
 
 
 def self_play_decider(folder: Path) -> tuple[list[tuple[str, list[str]]], Path]:
