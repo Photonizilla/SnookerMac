@@ -50,6 +50,20 @@ version with both models replaces both; one with only a candidate (or only decis
 part. Shot-policy versions are not deployable to the game: the Exact network needs the candidate-conditioned
 stroke and the all-decisions model.
 
+### The two models, and the three files
+
+| file | what it is |
+|---|---|
+| `Model.mlpackage` / `Model.mlmodelc` / `Model.mlpackage.pt` | the **stroke**: a candidate-conditioned network — position plus one proposed shot in, a score and the aim turn, power, side spin, vertical spin and lift out. Played with `--candidate-policy`, deployed as `Candidate2.mlmodelc`. |
+| `Decider.*` | the **all-decisions** network — `PolicySituation` in, 88 numbers out: 12 action logits, its own six stroke numbers, 64 placement logits and 6 colour logits. Played with `--decider`, deployed as `Decider2.mlmodelc`. |
+| `.mlpackage` | the converted Core ML program (source). |
+| `.mlmodelc` | the compiled model the app actually loads. |
+| `.mlpackage.pt` | the torch weights — what "Start from" and "Convert the saved weights" use. |
+
+In the Exact player the decider chooses every action; when the action is "shoot" the stroke comes from the
+candidate model, and only if that model is missing from the decider's own six-number shoot head. A
+candidate/stroke run therefore writes only `Model.*`, and an all-decisions run writes only `Decider.*`.
+
 **Delete the chosen version** removes its folder. The version that is currently deployed is refused — deploy
 another one first — so the game can never be left pointing at a version that is gone.
 

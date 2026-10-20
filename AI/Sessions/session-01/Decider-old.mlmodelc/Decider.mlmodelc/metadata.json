@@ -62,7 +62,7 @@
       }
     ],
     "userDefinedMetadata" : {
-      "com.github.apple.coremltools.conversion_date" : "2026-10-19",
+      "com.github.apple.coremltools.conversion_date" : "2026-10-20",
       "com.github.apple.coremltools.source" : "torch==2.14.1",
       "com.github.apple.coremltools.version" : "9.0",
       "com.github.apple.coremltools.source_dialect" : "TorchScript"

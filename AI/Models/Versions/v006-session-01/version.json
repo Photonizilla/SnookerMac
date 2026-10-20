@@ -1,0 +1,19 @@
+{
+  "session": "session-01",
+  "parent": "v005-session-01",
+  "created": "2026-10-20 11:03",
+  "task": "save_version",
+  "teacher": "hard",
+  "frames": 49,
+  "epochs": 200,
+  "hidden": 256,
+  "seed": 1,
+  "models": [
+    "Decider.mlmodelc",
+    "Decider.mlpackage",
+    "Decider.mlpackage.pt",
+    "Model.mlmodelc",
+    "Model.mlpackage",
+    "Model.mlpackage.pt"
+  ]
+}

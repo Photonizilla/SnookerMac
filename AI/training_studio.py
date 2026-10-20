@@ -180,8 +180,12 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
     python = python_path(config)
     folder = session_dir(config)
     dataset = folder / "training.bin"
+    # `Model` is the **stroke** (candidate-conditioned); `Decider` is **every decision**. The names are the
+    # two roles, not the run that made them.
     model = folder / "Model.mlpackage"
     compiled = folder / "Model.mlmodelc"
+    decider_model = folder / "Decider.mlpackage"
+    decider_compiled = folder / "Decider.mlmodelc"
     teacher = teacher_flags(config)
     training = training_flags(config)
 
@@ -197,8 +201,9 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
     train_shot = with_init([python, str(ROOT / "AI" / "train_policy_net.py"), str(dataset),
                             str(model)] + training, "shot")
     train_decider = with_init([python, str(ROOT / "AI" / "train_decider_net.py"), str(dataset),
-                               str(model)] + training, "decider")
+                               str(decider_model)] + training, "decider")
     compile_model = ["xcrun", "coremlcompiler", "compile", str(model), str(folder)]
+    compile_decider = ["xcrun", "coremlcompiler", "compile", str(decider_model), str(folder)]
     play = [engine, "--ai-play", "1"]
     if config.get("teacher") == "exact":
         play.append("--exact")
@@ -211,7 +216,7 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
         # `--candidate-policy` — otherwise the test frame would quietly be the search.
         play += ["--policy", str(compiled)]
     if task == "full_decider":
-        play += ["--decider", str(compiled)]
+        play += ["--decider", str(decider_compiled)]
     if task == "full_exact":
         # Both are compiled earlier in this same run, so the paths are the ones the test frame will use.
         # Exact is forced: the models were taught by a teacher with no aim error, and the frame is played
@@ -244,15 +249,13 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
     if task == "full_decider":
         return [("Exporting every decision", export_all),
                 ("Training the all-decisions policy", train_decider),
-                ("Compiling the model", compile_model), ("A test frame", play)]
+                ("Compiling the decisions model", compile_decider), ("A test frame", play)]
     if task == "full_exact":
         # The exact network the ESC menu uses: the all-decisions heads and the candidate stroke, trained
         # on the clean Exact teacher.
         decider_dataset = folder / "decisions.bin"
-        decider_model = folder / "Decider.mlpackage"
         decider_train = with_init([python, str(ROOT / "AI" / "train_decider_net.py"),
                                    str(decider_dataset), str(decider_model)] + training, "decider")
-        decider_compile = ["xcrun", "coremlcompiler", "compile", str(decider_model), str(folder)]
         clean_teacher = ["--exact", "--frames", str(int(config.get("frames", 12))),
                          "--reds", str(int(config.get("reds", 10))),
                          "--seed", str(int(config.get("seed", 1)))]
@@ -265,7 +268,7 @@ def stages_for(task: str, config: dict) -> list[tuple[str, list[str]]]:
                 ("Training the all-decisions hands", decider_train),
                 ("Training the stroke", train_candidate),
                 ("Compiling the stroke model", compile_model),
-                ("Compiling the decisions model", decider_compile),
+                ("Compiling the decisions model", compile_decider),
                 ("A test frame", play)]
         # A successful run is saved as a version; which one the game plays is the player's choice, made in
         # the Versions panel.
