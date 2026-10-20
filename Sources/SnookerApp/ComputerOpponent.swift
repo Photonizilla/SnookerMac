@@ -765,6 +765,14 @@ enum ComputerOpponent {
         let shotPolicy = options.candidatePolicyPath.flatMap {
             LearnedPolicy.loadCandidate(path: $0, describe: false)
         }
+        // Which model is which side of the match, up front: the frame lines and the result use A and B, and
+        // a result means nothing without knowing which file was A.
+        print("A: \(first)")
+        print("B: \(second)")
+        print("the seats alternate each frame: A takes seat 0 on even frames, seat 1 on odd ones")
+        if let shotPath = options.candidatePolicyPath {
+            print("both sides play the stroke from \(shotPath)")
+        }
         var wins = [0, 0]
         var points = [0, 0]
         for frame in 0..<options.frames {
